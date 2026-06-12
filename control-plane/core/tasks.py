@@ -271,3 +271,91 @@ def _best_asset(by_target, host):
         if t and (t in host or host in t):
             return a
     return next(iter(by_target.values()), None)
+
+
+@shared_task
+def external_discovery(tenant_id: int, roots=None, do_ports: bool = False):
+    """
+    Step 1 — agentless external discovery. Enumerate subdomains of the tenant's
+    root domains, probe which are live, fingerprint the tech stack, and ingest
+    the result as Assets + Products so the Product×CVE matcher can act on them.
+
+    Chain: subfinder -> httpx (-> naabu if do_ports). Hard-gated on
+    scanning_authorised (§11). Runs in the scan-worker image (it has the tools).
+    """
+    from .models import Tenant, Asset, Product
+    from . import discovery
+
+    tenant = Tenant.objects.get(pk=tenant_id)
+    if not tenant.scanning_authorised:
+        return f"external_discovery: ABORTED — no written authorisation for {tenant.slug} (§11)"
+
+    if not roots:
+        roots = [a.target for a in tenant.assets.filter(kind=Asset.Kind.DOMAIN) if a.target]
+    roots = sorted({r.strip() for r in (roots or []) if r and r.strip()})
+    if not roots:
+        return (f"external_discovery: no root domains for {tenant.slug} — add a "
+                f"domain asset or pass roots=[...]")
+
+    # 1) subdomains (passive). Seed with the roots themselves.
+    hosts = set(roots)
+    for root in roots:
+        try:
+            p = subprocess.run(["subfinder", "-silent", "-d", root],
+                               capture_output=True, text=True, timeout=600)
+            hosts |= set(discovery.parse_subfinder(p.stdout))
+        except FileNotFoundError:
+            return "external_discovery: subfinder not found — run this in the scan-worker container"
+        except subprocess.TimeoutExpired:
+            pass
+
+    # 2) probe live web + fingerprint
+    probe = subprocess.run(
+        ["httpx", "-silent", "-json", "-tech-detect", "-title", "-web-server"],
+        input="\n".join(sorted(hosts)), capture_output=True, text=True, timeout=1200)
+    live = discovery.parse_httpx(probe.stdout)
+
+    # 3) optional port sweep
+    ports = {}
+    if do_ports:
+        sweep = subprocess.run(["naabu", "-silent", "-json", "-list", "-"],
+                               input="\n".join(sorted(hosts)),
+                               capture_output=True, text=True, timeout=1200)
+        ports = discovery.parse_naabu(sweep.stdout)
+
+    # ---- ingest ----------------------------------------------------------
+    now = timezone.now()
+    new_assets = new_products = 0
+    for r in live:
+        host = r["host"]
+        if not host:
+            continue
+        asset, created = Asset.objects.get_or_create(
+            tenant=tenant, target=host,
+            defaults={"name": host, "kind": Asset.Kind.WEBAPP, "internet_facing": True},
+        )
+        changed = False
+        if not asset.internet_facing:
+            asset.internet_facing = True; changed = True
+        if asset.kind == Asset.Kind.HOST:
+            asset.kind = Asset.Kind.WEBAPP; changed = True
+        asset.last_seen = now
+        asset.save()
+        new_assets += int(created)
+
+        techs = list(r["tech"])
+        if r["webserver"]:
+            techs.append(r["webserver"])
+        for tech in techs:
+            info = discovery.split_tech(tech)
+            if not info["name"]:
+                continue
+            _, made = Product.objects.get_or_create(
+                asset=asset, name=info["name"], version=info["version"],
+                defaults={"vendor": info["vendor"], "source": "httpx"},
+            )
+            new_products += int(made)
+
+    port_note = f", {sum(len(v) for v in ports.values())} open ports" if do_ports else ""
+    return (f"external_discovery: {tenant.slug} — {len(hosts)} hosts enumerated, "
+            f"{len(live)} live, +{new_assets} assets, +{new_products} products{port_note}")
