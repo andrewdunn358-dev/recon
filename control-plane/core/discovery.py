@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+from urllib.parse import urlparse
 
 
 def looks_like_ip(s: str) -> bool:
@@ -48,10 +49,20 @@ def parse_subfinder(stdout: str) -> list[str]:
     return sorted(set(hosts))
 
 
+def _host_from_url(url: str) -> str:
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+
+
 def parse_httpx(stdout: str) -> list[dict]:
     """
-    httpx -json: one live web endpoint per line, with fingerprint fields. We keep
-    url/host/port/status/title/webserver and the detected tech list.
+    httpx -json: one live web endpoint per line, with fingerprint fields.
+
+    Note httpx names these the opposite way round to what you'd expect: 'input'
+    is the hostname we probed, and 'host' is the *resolved IP*. We key assets on
+    the hostname and keep the IP alongside.
     """
     out = []
     for line in _lines(stdout):
@@ -59,9 +70,11 @@ def parse_httpx(stdout: str) -> list[dict]:
             o = json.loads(line)
         except ValueError:
             continue
+        hostname = o.get("input") or _host_from_url(o.get("url", "")) or o.get("host", "")
         out.append({
             "url": o.get("url", ""),
-            "host": o.get("host") or o.get("input", ""),
+            "host": hostname,
+            "ip": o.get("host", ""),          # httpx puts the resolved IP here
             "port": str(o.get("port", "")),
             "status": o.get("status_code"),
             "title": o.get("title", ""),
