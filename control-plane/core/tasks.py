@@ -262,41 +262,8 @@ def nuclei_scan(tenant_id: int, only_targets=None):
             r = json.loads(line)
         except json.JSONDecodeError:
             continue
-
-        info = r.get("info", {}) or {}
-        severity = (info.get("severity") or "info").lower()
-        template_id = r.get("template-id", "") or r.get("templateID", "")
-        matched_at = r.get("matched-at") or r.get("matched_at") or r.get("host", "")
-
-        # Attribute back to an asset by host/ip.
-        host = r.get("host", "") or r.get("ip", "")
-        asset = by_target.get(host) or _best_asset(by_target, host)
-        if asset is None:
-            continue
-
-        # If the template carries a CVE, link/create it; else it's CVE-less.
-        cve = None
-        cve_ids = (info.get("classification", {}) or {}).get("cve-id") or []
-        if cve_ids:
-            cve, _ = CVE.objects.get_or_create(
-                cve_id=cve_ids[0],
-                defaults={"title": info.get("name", ""), "sources": ["nuclei"]},
-            )
-
-        Finding.objects.update_or_create(
-            asset=asset, source="nuclei", template_id=template_id, matched_at=matched_at,
-            defaults={
-                "tenant": tenant,
-                "cve": cve,
-                "title": info.get("name", "")[:400],
-                "severity": severity,
-                "priority": SEVERITY_TO_PRIORITY.get(severity, "P4"),
-                "match_confidence": "scan",
-                "match_reason": f"Nuclei: {info.get('name','')} ({template_id})"[:300],
-                "last_seen": timezone.now(),
-            },
-        )
-        ingested += 1
+        if ingest_nuclei_record(tenant, by_target, r):
+            ingested += 1
 
     return f"nuclei_scan: {ingested} findings from {len(targets)} target(s) for {tenant.slug}"
 
@@ -307,6 +274,92 @@ def _best_asset(by_target, host):
         if t and (t in host or host in t):
             return a
     return next(iter(by_target.values()), None)
+
+
+def _stream(cmd, input_text=None):
+    """
+    Run a tool and yield its stdout lines AS THEY ARRIVE (not after it finishes).
+    This is what lets the dashboard show discovery/scan results live instead of a
+    silent multi-minute wait.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE if input_text is not None else None,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+    )
+    if input_text is not None:
+        try:
+            proc.stdin.write(input_text)
+        finally:
+            proc.stdin.close()
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if line:
+                yield line
+    finally:
+        proc.stdout.close()
+        proc.wait()
+
+
+def _ingest_httpx_record(tenant, r):
+    """Create/refresh the asset + its products from one httpx record. -> (new_asset, new_products)."""
+    from .models import Asset, Product
+    from . import discovery
+    host = r.get("host")
+    if not host:
+        return 0, 0
+    asset, created = Asset.objects.get_or_create(
+        tenant=tenant, target=host,
+        defaults={"name": host, "kind": Asset.Kind.WEBAPP, "internet_facing": True})
+    if not asset.internet_facing:
+        asset.internet_facing = True
+    if asset.kind == Asset.Kind.HOST:
+        asset.kind = Asset.Kind.WEBAPP
+    asset.last_seen = timezone.now()
+    asset.save()
+    np = 0
+    techs = list(r.get("tech", []))
+    if r.get("webserver"):
+        techs.append(r["webserver"])
+    for tech in techs:
+        info = discovery.split_tech(tech)
+        if not info["name"] or not discovery.is_product_tech(info["name"]):
+            continue
+        _, made = Product.objects.get_or_create(
+            asset=asset, name=info["name"], version=info["version"],
+            defaults={"vendor": info["vendor"], "source": "httpx"})
+        np += int(made)
+    return int(created), np
+
+
+def ingest_nuclei_record(tenant, by_target, r, scan_job=None):
+    """Turn one Nuclei JSONL record into a Finding (attributed to scan_job if given)."""
+    from .models import CVE, Finding
+    info = r.get("info", {}) or {}
+    severity = (info.get("severity") or "info").lower()
+    template_id = r.get("template-id", "") or r.get("templateID", "")
+    matched_at = r.get("matched-at") or r.get("matched_at") or r.get("host", "")
+    host = r.get("host", "") or r.get("ip", "")
+    asset = by_target.get(host) or _best_asset(by_target, host)
+    if asset is None:
+        return None
+    cve = None
+    cve_ids = (info.get("classification", {}) or {}).get("cve-id") or []
+    if cve_ids:
+        cve, _ = CVE.objects.get_or_create(
+            cve_id=cve_ids[0],
+            defaults={"title": info.get("name", ""), "sources": ["nuclei"]})
+    f, _ = Finding.objects.update_or_create(
+        asset=asset, source="nuclei", template_id=template_id, matched_at=matched_at,
+        defaults={
+            "tenant": tenant, "cve": cve, "title": info.get("name", "")[:400],
+            "severity": severity, "priority": SEVERITY_TO_PRIORITY.get(severity, "P4"),
+            "match_confidence": "scan",
+            "match_reason": f"Nuclei: {info.get('name','')} ({template_id})"[:300],
+            "last_seen": timezone.now(), "scan_job": scan_job,
+        })
+    return f
 
 
 @shared_task
@@ -363,37 +416,11 @@ def external_discovery(tenant_id: int, roots=None, do_ports: bool = False):
         ports = discovery.parse_naabu(sweep.stdout)
 
     # ---- ingest ----------------------------------------------------------
-    now = timezone.now()
     new_assets = new_products = 0
     for r in live:
-        host = r["host"]
-        if not host:
-            continue
-        asset, created = Asset.objects.get_or_create(
-            tenant=tenant, target=host,
-            defaults={"name": host, "kind": Asset.Kind.WEBAPP, "internet_facing": True},
-        )
-        changed = False
-        if not asset.internet_facing:
-            asset.internet_facing = True; changed = True
-        if asset.kind == Asset.Kind.HOST:
-            asset.kind = Asset.Kind.WEBAPP; changed = True
-        asset.last_seen = now
-        asset.save()
-        new_assets += int(created)
-
-        techs = list(r["tech"])
-        if r["webserver"]:
-            techs.append(r["webserver"])
-        for tech in techs:
-            info = discovery.split_tech(tech)
-            if not info["name"] or not discovery.is_product_tech(info["name"]):
-                continue
-            _, made = Product.objects.get_or_create(
-                asset=asset, name=info["name"], version=info["version"],
-                defaults={"vendor": info["vendor"], "source": "httpx"},
-            )
-            new_products += int(made)
+        a, p = _ingest_httpx_record(tenant, r)
+        new_assets += a
+        new_products += p
 
     port_note = f", {sum(len(v) for v in ports.values())} open ports" if do_ports else ""
     return (f"external_discovery: {tenant.slug} — {len(hosts)} hosts enumerated, "
@@ -471,19 +498,25 @@ def load_cve_corpus(batch_size: int = 2000, limit: int = 0, rebuild_tokens: bool
 @shared_task
 def adhoc_assess(job_id: int):
     """
-    Dashboard-triggered ad-hoc assessment. Enqueued to the scan queue so the
-    scan-worker (which carries subfinder/httpx/nuclei) runs it. Orchestrates
-    discovery + optional Nuclei inline and records progress on the ScanJob the
-    page is polling. Results land under the holding 'Ad-hoc' tenant.
+    Dashboard-triggered assessment that reports progress AS IT GOES. Runs on the
+    scan-worker. Persists discovery results immediately (so they show within a
+    minute or two), then streams Nuclei findings one at a time — each phase and
+    each finding updates the ScanJob the page is polling. Findings are tagged
+    with the job so the panel can stream this run's results live.
     """
     from .models import ScanJob, Tenant, Asset
+    from .matching import tokens as name_tokens, match_product_to_cve
+    from .models import Product, CVE, Finding, CveProductToken
     from . import discovery
 
     job = ScanJob.objects.get(pk=job_id)
-    job.status = ScanJob.Status.RUNNING
-    job.started_at = timezone.now()
-    job.save(update_fields=["status", "started_at"])
 
+    def upd(**kw):
+        for k, v in kw.items():
+            setattr(job, k, v)
+        job.save(update_fields=list(kw))
+
+    upd(status=ScanJob.Status.RUNNING, started_at=timezone.now(), phase="starting…")
     try:
         target = job.target.strip()
         tenant = job.tenant
@@ -494,24 +527,85 @@ def adhoc_assess(job_id: int):
             job.tenant = tenant
             job.save(update_fields=["tenant"])
 
-        kind = Asset.Kind.IP if discovery.looks_like_ip(target) else Asset.Kind.DOMAIN
+        base = target.split("/")[0]
+        is_ip = discovery.looks_like_ip(target)
         Asset.objects.get_or_create(
             tenant=tenant, target=target,
-            defaults={"name": target, "kind": kind, "internet_facing": True})
+            defaults={"name": target, "kind": Asset.Kind.IP if is_ip else Asset.Kind.DOMAIN,
+                      "internet_facing": True})
 
-        lines = [external_discovery(tenant.id, roots=[target], do_ports=job.do_ports)]
+        # Phase 1 — subdomains (skip for IPs).
+        hosts = {target}
+        if not is_ip:
+            upd(phase=f"Enumerating subdomains of {target}…")
+            for line in _stream(["subfinder", "-silent", "-d", target]):
+                hosts |= set(discovery.parse_subfinder(line))
+        upd(phase=f"Found {len(hosts)} host(s) — probing which are live…",
+            total=len(hosts), progress=0)
+
+        # Phase 2 — httpx, streamed: assets/products appear as each host responds.
+        n_assets = n_products = probed = 0
+        for line in _stream(["httpx", "-silent", "-json", "-tech-detect", "-title", "-web-server"],
+                            input_text="\n".join(sorted(hosts))):
+            for r in discovery.parse_httpx(line):
+                a, p = _ingest_httpx_record(tenant, r)
+                n_assets += a
+                n_products += p
+                probed += 1
+                upd(phase=f"Live: {probed} web host(s), {n_products} product(s) found…",
+                    progress=probed)
+
+        # Phase 3 — match discovered products against the full CVE corpus.
+        upd(phase=f"{probed} live host(s), {n_products} product(s). Matching against CVE corpus…")
+        cve_matches = 0
+        prods = Product.objects.filter(
+            asset__tenant=tenant, asset__target__icontains=base).select_related("asset")
+        for product in prods:
+            ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+            if not ptoks:
+                continue
+            cand = (CveProductToken.objects.filter(token__in=ptoks)
+                    .values_list("cve_id", flat=True).distinct())
+            for cve in CVE.objects.filter(cve_id__in=list(cand)):
+                m = match_product_to_cve(product, cve)
+                if not m:
+                    continue
+                Finding.objects.update_or_create(
+                    asset=product.asset, cve=cve, product=product,
+                    defaults={"tenant": tenant,
+                              "priority": prioritise(cve, product.asset, m.confidence),
+                              "match_confidence": m.confidence, "match_reason": m.reason,
+                              "last_seen": timezone.now(), "scan_job": job})
+                cve_matches += 1
+                upd(phase=f"Matched {cve_matches} CVE(s) so far…")
+
+        # Phase 4 — Nuclei deep scan (optional), streamed finding-by-finding.
+        nuclei_found = 0
         if job.do_nuclei:
-            base = target.split("/")[0]
-            scan_targets = [a.target for a in
-                            tenant.assets.filter(target__icontains=base) if a.target] or [target]
-            lines.append(nuclei_scan(tenant.id, only_targets=scan_targets))
-        watch_loop()  # match the freshly discovered products against the corpus
+            by_target = {a.target: a for a in
+                         tenant.assets.exclude(target="").filter(target__icontains=base) if a.target}
+            tlist = list(by_target) or [target]
+            upd(phase=f"Deep scanning {len(tlist)} host(s) with Nuclei — the slow part…",
+                total=len(tlist), progress=0)
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as tf:
+                tf.write("\n".join(tlist))
+                tfile = tf.name
+            for line in _stream(["nuclei", "-list", tfile, "-jsonl", "-silent",
+                                 "-severity", "low,medium,high,critical"]):
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ingest_nuclei_record(tenant, by_target, r, scan_job=job):
+                    nuclei_found += 1
+                    upd(phase=f"Nuclei: {nuclei_found} finding(s) so far…", progress=nuclei_found)
 
-        job.summary = "\n".join(lines)
-        job.status = ScanJob.Status.DONE
-    except Exception as e:  # noqa: BLE001 — surface the error to the user
+        job.summary = (f"{probed} live host(s), {n_products} product(s); "
+                       f"{cve_matches} CVE match(es), {nuclei_found} scan finding(s).")
+        upd(status=ScanJob.Status.DONE, phase="done", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
+    except Exception as e:  # noqa: BLE001 — surface to the user
         job.summary = f"error: {e}"
-        job.status = ScanJob.Status.FAILED
-    job.finished_at = timezone.now()
-    job.save()
+        upd(status=ScanJob.Status.FAILED, phase="failed", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
     return f"adhoc_assess[{job_id}]: {job.status}"

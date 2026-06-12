@@ -164,6 +164,10 @@ class Finding(models.Model):
     first_seen = models.DateTimeField(default=timezone.now)
     last_seen = models.DateTimeField(default=timezone.now)
     notified = models.BooleanField(default=False)
+    # Set when a finding came from a dashboard-triggered scan, so the panel can
+    # stream this run's findings live.
+    scan_job = models.ForeignKey("ScanJob", on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="findings")
 
     class Meta:
         ordering = ["priority"]
@@ -221,6 +225,9 @@ class ScanJob(models.Model):
     do_ports = models.BooleanField(default=False)
     do_nuclei = models.BooleanField(default=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    phase = models.CharField(max_length=120, blank=True)   # human-readable current step
+    progress = models.IntegerField(default=0)              # e.g. hosts scanned
+    total = models.IntegerField(default=0)                 # e.g. hosts to scan
     summary = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                    null=True, blank=True)

@@ -51,6 +51,16 @@
     border:1px solid var(--line); border-radius:8px; padding:12px;
   }
   .scanout .err{color:var(--p1); font-size:13px; margin-top:8px}
+  .livefindings{margin-top:12px; display:flex; flex-direction:column; gap:6px}
+  .lf{display:flex; gap:10px; align-items:center; font-size:12.5px;
+    padding:7px 10px; background:var(--bg); border:1px solid var(--line);
+    border-left:3px solid var(--c,var(--faint)); border-radius:6px;
+    animation:lfin .25s ease}
+  @keyframes lfin{from{opacity:0; transform:translateY(-3px)}to{opacity:1}}
+  .lf .lp{font-family:var(--mono); font-weight:700; min-width:26px}
+  .lf .ll{font-family:var(--mono); color:var(--text)}
+  .lf .la{color:var(--faint); margin-left:auto; font-size:11.5px}
+  .lf .lk{color:var(--p1); font-weight:600; font-size:10px; letter-spacing:.05em}
   .jobs{margin-top:14px; font-size:12px; color:var(--faint)}
   .spin{display:inline-block; width:10px; height:10px; border:2px solid var(--p3);
     border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite;
@@ -193,6 +203,7 @@
     </div>
     <div class="scanout" id="scanout">
       <div class="state" id="scanstate"></div>
+      <div class="livefindings" id="livefindings"></div>
       <pre id="scansummary" hidden></pre>
       <div class="err" id="scanerr" hidden></div>
     </div>
@@ -257,17 +268,30 @@
   const target = document.getElementById('target');
   const out = document.getElementById('scanout');
   const state = document.getElementById('scanstate');
+  const live = document.getElementById('livefindings');
   const summary = document.getElementById('scansummary');
   const errBox = document.getElementById('scanerr');
   let timer = null;
 
+  const PRI_COLOR = {P1:'var(--p1)',P2:'var(--p2)',P3:'var(--p3)','P?':'var(--review)',P4:'var(--faint)'};
   function show(){ out.classList.add('show'); }
   function setErr(msg){ errBox.hidden = false; errBox.textContent = msg; }
   function clearErr(){ errBox.hidden = true; errBox.textContent=''; }
 
+  function renderFindings(items){
+    if(!items || !items.length) return;
+    live.innerHTML = items.map(f =>
+      `<div class="lf" style="--c:${PRI_COLOR[f.priority]||'var(--faint)'}">`+
+      `<span class="lp" style="color:${PRI_COLOR[f.priority]||'var(--faint)'}">${f.priority}</span>`+
+      `<span class="ll">${esc(f.label)}</span>`+
+      (f.kev?'<span class="lk">KEV</span>':'')+
+      `<span class="la">${esc(f.asset)}</span></div>`).join('');
+  }
+  function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
   async function start(){
     const t = target.value.trim();
-    clearErr(); summary.hidden = true; summary.textContent='';
+    clearErr(); summary.hidden = true; summary.textContent=''; live.innerHTML='';
     if(!t){ show(); setErr('Enter a domain or IP.'); return; }
     if(!document.getElementById('opt-auth').checked){
       show(); setErr('Tick the authorisation box first (§11).'); return; }
@@ -292,22 +316,33 @@
   }
 
   function poll(id){
-    state.innerHTML = '<span class="spin"></span>scanning '+target.value.trim()+' — this can take a few minutes…';
     timer = setInterval(async ()=>{
       let r;
       try{ r = await fetch("{% url 'scan_status' %}?job="+id); }catch(e){ return; }
       const d = await r.json();
+      // live phase + findings as they arrive
+      if(d.status === 'queued'){
+        state.className = 'state';
+        state.innerHTML = '<span class="spin"></span>queued — waiting for the scan worker to pick this up…';
+      }
+      else if(d.status === 'running'){
+        const cnt = d.count ? `  ·  ${d.count} finding(s) so far` : '';
+        state.className = 'state';
+        state.innerHTML = '<span class="spin"></span>'+esc(d.phase||'scanning…')+cnt;
+        renderFindings(d.findings);
+      }
       if(d.status === 'done' || d.status === 'failed'){
         clearInterval(timer); go.disabled = false;
         state.className = 'state ' + d.status;
-        state.textContent = d.status === 'done' ? 'done — '+d.target : 'failed — '+d.target;
+        state.textContent = (d.status==='done'?'done — ':'failed — ')+esc(d.target);
+        renderFindings(d.findings);
         if(d.summary){ summary.hidden = false; summary.textContent = d.summary; }
         if(d.status === 'done'){
-          state.textContent += '  · refreshing findings…';
-          setTimeout(()=>location.reload(), 1500);
+          state.textContent += '  · refreshing the board…';
+          setTimeout(()=>location.reload(), 2500);
         }
       }
-    }, 2500);
+    }, 2000);
   }
 
   go.addEventListener('click', start);

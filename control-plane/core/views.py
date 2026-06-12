@@ -66,8 +66,22 @@ def scan_status(request):
         job = ScanJob.objects.get(pk=request.GET.get("job"))
     except (ScanJob.DoesNotExist, ValueError, TypeError):
         return JsonResponse({"error": "unknown job"}, status=404)
+
+    findings = [{
+        "priority": f.priority,
+        "label": f.label,
+        "asset": f.asset.name,
+        "kev": bool(f.cve and f.cve.in_kev),
+        "reason": f.match_reason or f.title,
+    } for f in job.findings.select_related("asset", "cve").order_by("priority")[:200]]
+
     return JsonResponse({
         "status": job.status,
+        "phase": job.phase,
+        "progress": job.progress,
+        "total": job.total,
         "summary": job.summary,
         "target": job.target,
+        "findings": findings,
+        "count": len(findings),
     })
