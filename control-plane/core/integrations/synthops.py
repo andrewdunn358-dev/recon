@@ -19,7 +19,21 @@ import requests
 SYNTHOPS_URL = os.environ.get("SYNTHOPS_URL", "").rstrip("/")
 SYNTHOPS_USER = os.environ.get("SYNTHOPS_USER", "")
 SYNTHOPS_PASSWORD = os.environ.get("SYNTHOPS_PASSWORD", "")
+# Internal hosts (e.g. *.local) often present a self-signed / internal-CA cert.
+# Set SYNTHOPS_VERIFY_SSL=false to skip verification on a trusted LAN, or point
+# SYNTHOPS_CA_BUNDLE at your internal CA file to verify properly.
+_verify_env = os.environ.get("SYNTHOPS_VERIFY_SSL", "true").lower()
+SYNTHOPS_VERIFY = os.environ.get("SYNTHOPS_CA_BUNDLE") or (
+    _verify_env not in ("false", "0", "no"))
 TIMEOUT = 30
+
+if SYNTHOPS_VERIFY is False:
+    # Quiet the warning we'd otherwise emit on every call.
+    try:
+        from urllib3.exceptions import InsecureRequestWarning
+        requests.packages.urllib3.disable_warnings(InsecureRequestWarning)  # type: ignore
+    except Exception:
+        pass
 
 
 class SynthOpsError(RuntimeError):
@@ -54,7 +68,7 @@ class SynthOps:
             raise SynthOpsError("SYNTHOPS_USER / SYNTHOPS_PASSWORD not set")
         r = requests.post(self._api("/auth/login"),
                           json={"email": self.user, "password": self.password},
-                          timeout=TIMEOUT)
+                          timeout=TIMEOUT, verify=SYNTHOPS_VERIFY)
         if r.status_code != 200:
             raise SynthOpsError(f"SynthOps login failed ({r.status_code})")
         self.token = (r.json() or {}).get("access_token")
@@ -66,11 +80,13 @@ class SynthOps:
         if not self.token:
             self.login()
         headers = {"Authorization": f"Bearer {self.token}"}
-        r = requests.get(self._api(path), params=params, headers=headers, timeout=TIMEOUT)
+        r = requests.get(self._api(path), params=params, headers=headers,
+                         timeout=TIMEOUT, verify=SYNTHOPS_VERIFY)
         if r.status_code == 401:  # token expired — re-login once and retry
             self.login()
             headers = {"Authorization": f"Bearer {self.token}"}
-            r = requests.get(self._api(path), params=params, headers=headers, timeout=TIMEOUT)
+            r = requests.get(self._api(path), params=params, headers=headers,
+                             timeout=TIMEOUT, verify=SYNTHOPS_VERIFY)
         r.raise_for_status()
         return r.json()
 
