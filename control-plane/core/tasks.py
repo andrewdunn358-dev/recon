@@ -616,31 +616,57 @@ def adhoc_assess(job_id: int):
 
 
 @shared_task
-def sync_synthops():
+def sync_synthops(reset=False):
     """
     Read Recon's inventory from SynthOps (the source of truth) and retire the
     direct TRMM pull: clients -> tenants, servers/workstations -> assets, and
     each device's TRMM software list -> products. The matcher then runs over it.
     SynthOps already aggregates TRMM, so this is one read instead of two systems.
+
+    Keyed on stable SynthOps ids (Tenant.external_id / Asset.external_id) so a
+    re-run can only update, never duplicate. reset=True clears existing inventory
+    first (tenants -> cascade assets/products/findings) for a clean rebuild.
     """
     from django.utils.text import slugify
     from .models import Tenant, Asset, Product
     from .integrations.synthops import SynthOps
     from .integrations import trmm
 
+    if reset:
+        n = Tenant.objects.count()
+        Tenant.objects.all().delete()  # cascades assets, products, findings
+        print(f"sync_synthops: reset — cleared {n} tenants and all their assets/findings")
+
     so = SynthOps()
     so.login()
 
-    # clients -> tenants (keep a map so devices attach to the right one).
+    def ensure_tenant(external_id, name, slug_seed):
+        cid = str(external_id) if external_id not in (None, "") else ""
+        t = Tenant.objects.filter(external_id=cid).first() if cid else None
+        if t is None:  # legacy rows (pre-external_id) match by slug, then adopt the id
+            base = slugify(slug_seed)[:50] or "client"
+            slug, i = base, 2
+            existing = Tenant.objects.filter(slug=base).first()
+            if existing and (not existing.external_id or existing.external_id == cid):
+                t = existing
+            else:
+                while Tenant.objects.filter(slug=slug).exists():
+                    slug = f"{base[:46]}-{i}"; i += 1
+                t = Tenant(slug=slug)
+        created = t.pk is None
+        if t.external_id != cid and cid:
+            t.external_id = cid
+        if t.name != name:
+            t.name = name
+        t.save()
+        return t, created
+
+    # clients -> tenants (keyed on SynthOps client id).
     by_client = {}
     new_tenants = 0
     for c in so.clients():
         name = (c.get("name") or "Unknown").strip()
-        slug = slugify(c.get("code") or name)[:50] or "client"
-        tenant, created = Tenant.objects.get_or_create(slug=slug, defaults={"name": name})
-        if tenant.name != name:
-            tenant.name = name
-            tenant.save(update_fields=["name"])
+        tenant, created = ensure_tenant(c.get("id"), name, c.get("code") or name)
         by_client[c.get("id")] = tenant
         new_tenants += int(created)
 
@@ -666,16 +692,25 @@ def sync_synthops():
             tenant = by_client.get(d.get("client_id"))
             if tenant is None:
                 cname = (d.get("client_name") or "Unknown").strip()
-                tenant, _ = Tenant.objects.get_or_create(
-                    slug=slugify(cname)[:50] or "unknown", defaults={"name": cname})
+                tenant, _ = ensure_tenant(None, cname, cname)
 
             host = d.get("hostname") or str(d.get("id"))
             public_ip = (d.get("public_ip") or "").strip()
             target = public_ip or (d.get("ip_address") or "").strip() or host
-            asset, _ = Asset.objects.update_or_create(
-                tenant=tenant, name=host,
-                defaults={"kind": Asset.Kind.HOST, "target": target,
-                          "internet_facing": bool(public_ip), "last_seen": timezone.now()})
+            did = str(d.get("id")) if d.get("id") not in (None, "") else ""
+
+            asset = Asset.objects.filter(tenant=tenant, external_id=did).first() if did else None
+            if asset is None:  # legacy row keyed by name, or brand new
+                asset = Asset.objects.filter(tenant=tenant, name=host).first() \
+                        or Asset(tenant=tenant, name=host)
+            asset.external_id = did
+            asset.name = host
+            asset.kind = Asset.Kind.HOST
+            asset.target = target
+            asset.internet_facing = bool(public_ip)
+            asset.last_seen = timezone.now()
+            asset.save()
+
             if kind_label == "server":
                 n_servers += 1
             else:

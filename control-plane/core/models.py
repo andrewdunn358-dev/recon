@@ -14,6 +14,9 @@ class Tenant(models.Model):
     """A client org. Same shape as the wifi-portal tenant model."""
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
+    # Stable upstream id (e.g. SynthOps client id) so syncs key on identity, not
+    # on a derived slug that can drift and create duplicate tenants.
+    external_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
     # Per-tenant scan authorisation gate (§11). Nothing active runs without this.
     scanning_authorised = models.BooleanField(
         default=False,
@@ -35,6 +38,9 @@ class Asset(models.Model):
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="assets")
     name = models.CharField(max_length=255)
+    # Stable upstream id (e.g. SynthOps device id) — sync keys on this so a
+    # hostname change or re-run can't spawn a duplicate asset.
+    external_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
     kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.HOST)
     # The single most important attribute for prioritisation (§5.4).
     internet_facing = models.BooleanField(default=False)
