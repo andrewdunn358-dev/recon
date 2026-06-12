@@ -10,6 +10,10 @@ app.autodiscover_tasks()
 # Nightly orchestration schedule (§7). Times are placeholders — keep active
 # scans inside agreed client windows (§11).
 app.conf.beat_schedule = {
+    "nightly-cve-mirror": {
+        "task": "core.tasks.update_cve_mirror",
+        "schedule": crontab(hour=1, minute=30),
+    },
     "nightly-feed-pull": {
         "task": "core.tasks.feed_pull",
         "schedule": crontab(hour=2, minute=0),

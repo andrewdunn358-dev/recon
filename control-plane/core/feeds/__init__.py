@@ -20,6 +20,7 @@ import csv
 import gzip
 import io
 import json
+import os
 from pathlib import Path
 
 FEEDS = {
@@ -185,6 +186,76 @@ def assemble_live(delta_limit: int = 800) -> dict:
     cves = {}
     for cid in target:
         flat = fetch_cve_record(cid)
+        if not flat:
+            continue
+        flat["in_kev"] = cid in kev
+        flat["kev_date_added"] = kev.get(cid)
+        flat["epss"] = epss.get(cid)
+        cves[cid] = flat
+    return {"cves": cves, "kev": kev, "epss": epss}
+
+
+# ---- local cvelistV5 mirror (preferred on the box) ------------------------
+#
+# Mirror the cvelistV5 repo to a persistent volume once, then `git pull` nightly
+# for deltas (small). Reading records off local disk is instant and hits no rate
+# limits — far better than thousands of per-record GitHub requests. KEV and EPSS
+# stay as small direct downloads; only the bulky CVE corpus is mirrored.
+
+CVELIST_DIR = os.environ.get("CVELIST_DIR", "/data/cvelist")
+CVELIST_REPO = "https://github.com/CVEProject/cvelistV5"
+
+
+def mirror_present() -> bool:
+    return Path(CVELIST_DIR, "cves").is_dir()
+
+
+def local_cve_path(cve_id: str) -> Path:
+    _, year, num = cve_id.split("-")
+    bucket = f"{int(num) // 1000}xxx"
+    return Path(CVELIST_DIR, "cves", year, bucket, f"{cve_id}.json")
+
+
+def read_local_cve(cve_id: str) -> dict | None:
+    p = local_cve_path(cve_id)
+    if not p.is_file():
+        return None
+    try:
+        return parse_cve_record(json.loads(p.read_text()))
+    except Exception:
+        return None
+
+
+def read_local_delta() -> set[str]:
+    """Recently changed CVE ids from the mirror's cves/delta.json."""
+    p = Path(CVELIST_DIR, "cves", "delta.json")
+    if not p.is_file():
+        return set()
+    try:
+        delta = json.loads(p.read_text())
+    except Exception:
+        return set()
+    ids = set()
+    for bucket in ("new", "updated"):
+        for item in delta.get(bucket, []) or []:
+            cid = item.get("cveId") or item.get("cveID")
+            if cid:
+                ids.add(cid)
+    return ids
+
+
+def assemble_local() -> dict:
+    """
+    Same actionable set as assemble_live (KEV + recent delta), but the CVE
+    records are read from the local mirror instead of fetched over HTTP.
+    """
+    kev = fetch_kev()
+    epss = fetch_epss()
+
+    target = set(kev) | read_local_delta()
+    cves = {}
+    for cid in target:
+        flat = read_local_cve(cid)
         if not flat:
             continue
         flat["in_kev"] = cid in kev

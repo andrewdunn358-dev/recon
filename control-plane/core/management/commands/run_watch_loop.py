@@ -35,15 +35,16 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING("\n3. Findings (prioritised):\n"))
         rows = sorted(
             Finding.objects.select_related("cve", "asset", "product"),
-            key=lambda f: (ORDER.index(f.priority), -(f.cve.epss or 0)),
+            key=lambda f: (ORDER.index(f.priority), -((f.cve.epss or 0) if f.cve else 0)),
         )
         hdr = f"   {'PRI':<4}{'CVE':<18}{'KEV':<5}{'EPSS':<6}{'ASSET':<16}{'CONF':<8}REASON"
         self.stdout.write(self.style.HTTP_INFO(hdr))
         self.stdout.write("   " + "-" * 92)
         for f in rows:
-            kev = "yes" if f.cve.in_kev else "-"
-            epss = f"{f.cve.epss:.2f}" if f.cve.epss is not None else "-"
-            line = (f"   {f.priority:<4}{f.cve_id:<18}{kev:<5}{epss:<6}"
+            kev = "yes" if (f.cve and f.cve.in_kev) else "-"
+            epss = f"{f.cve.epss:.2f}" if (f.cve and f.cve.epss is not None) else "-"
+            label = f.cve_id or f.label
+            line = (f"   {f.priority:<4}{label:<18}{kev:<5}{epss:<6}"
                     f"{f.asset.name:<16}{f.match_confidence:<8}{f.match_reason}")
             style = self.style.ERROR if f.priority == "P1" else (
                 self.style.WARNING if f.priority in ("P2", "P?") else lambda x: x)

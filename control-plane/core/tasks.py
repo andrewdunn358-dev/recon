@@ -14,12 +14,35 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+from pathlib import Path
 from celery import shared_task
 from django.utils import timezone
 
 from . import feeds
 from .matching import match_product_to_cve
 from .prioritise import prioritise
+
+
+@shared_task
+def update_cve_mirror():
+    """
+    Clone or update the local cvelistV5 mirror (§5.2). First run shallow-clones
+    it (a few GB onto the persistent volume); later runs `git pull` only the
+    daily deltas. feed_pull then reads records from this local copy rather than
+    hitting GitHub per-record — fast, and no rate limits.
+    """
+    target = feeds.CVELIST_DIR
+    if Path(target, ".git").is_dir():
+        cmd = ["git", "-C", target, "pull", "--no-edit"]
+        action = "pull"
+    else:
+        Path(target).mkdir(parents=True, exist_ok=True)
+        cmd = ["git", "clone", "--depth", "1", feeds.CVELIST_REPO, target]
+        action = "clone"
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    if proc.returncode == 0:
+        return f"update_cve_mirror: {action} ok ({target})"
+    return f"update_cve_mirror: {action} FAILED — {proc.stderr.strip()[-300:]}"
 
 
 @shared_task
@@ -32,11 +55,17 @@ def feed_pull(use_fixtures: bool = False):
 
     if use_fixtures:
         bundle = feeds.load_fixtures()
-        assembled = bundle["cves"]
+        src = "fixtures"
+    elif feeds.mirror_present():
+        # Preferred: read CVE records off the local cvelistV5 mirror (fast, no
+        # rate limits). KEV/EPSS are still small live downloads.
+        bundle = feeds.assemble_local()
+        src = "local mirror"
     else:
-        # Live: KEV + EPSS + cvelistV5 deltas, fetched from the real feeds.
+        # Fallback until the mirror is cloned: per-record fetch from GitHub.
         bundle = feeds.assemble_live()
-        assembled = bundle["cves"]
+        src = "live (no mirror yet)"
+    assembled = bundle["cves"]
 
     n = 0
     for cid, flat in assembled.items():
@@ -57,7 +86,7 @@ def feed_pull(use_fixtures: bool = False):
             },
         )
         n += 1
-    return f"feed_pull: upserted {n} CVEs ({'fixtures' if use_fixtures else 'live'})"
+    return f"feed_pull: upserted {n} CVEs ({src})"
 
 
 @shared_task
@@ -108,7 +137,7 @@ def notify_new_findings():
 
     pending = Finding.objects.filter(notified=False).select_related("cve", "asset", "tenant")
     for f in pending:
-        print(f"[ALERT] {f.tenant.name}: {f.cve_id} on {f.asset.name} "
+        print(f"[ALERT] {f.tenant.name}: {f.label} on {f.asset.name} "
               f"-> {f.get_priority_display()} ({f.match_confidence}: {f.match_reason})")
     count = pending.update(notified=True)
     return f"notify: {count} findings notified"

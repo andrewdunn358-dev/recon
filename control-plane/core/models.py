@@ -171,12 +171,8 @@ class Finding(models.Model):
         return f"{self.label} on {self.asset} [{self.priority}]"
 
     @property
-    def cve_id(self):
-        return self.cve.cve_id if self.cve else ""
-
-    @property
     def label(self):
         """What to call this finding — CVE id, else template/title."""
-        if self.cve:
-            return self.cve.cve_id
+        if self.cve_id:
+            return self.cve_id
         return self.template_id or self.title or "finding"
