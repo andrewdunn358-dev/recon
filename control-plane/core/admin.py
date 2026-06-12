@@ -45,7 +45,7 @@ class WatchAdmin(admin.ModelAdmin):
 
 @admin.register(Finding)
 class FindingAdmin(admin.ModelAdmin):
-    list_display = ("cve_id", "asset", "priority", "status", "match_confidence", "notified")
-    list_filter = ("priority", "status", "match_confidence", "tenant")
-    search_fields = ("cve__cve_id", "asset__name")
+    list_display = ("label", "asset", "source", "priority", "severity", "status", "match_confidence", "notified")
+    list_filter = ("source", "priority", "status", "match_confidence", "tenant")
+    search_fields = ("cve__cve_id", "asset__name", "title", "template_id")
     list_editable = ("status",)

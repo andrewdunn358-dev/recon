@@ -153,8 +153,15 @@
              style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
       <div class="row">
         <span class="pri">{{ f.priority }}</span>
-        <span class="cve">{{ f.cve_id }}{% if f.cve.in_kev %}<span class="kev">KEV</span>{% endif %}</span>
-        <span class="epss">{% if f.cve.epss != None %}{{ f.cve.epss }}<span class="bar"><i style="width:{% widthratio f.cve.epss 1 100 %}%"></i></span>{% else %}—{% endif %}</span>
+        <span class="cve">
+          {% if f.cve %}{{ f.cve_id }}{% if f.cve.in_kev %}<span class="kev">KEV</span>{% endif %}
+          {% else %}{{ f.label }}{% endif %}
+        </span>
+        <span class="epss">
+          {% if f.cve and f.cve.epss != None %}{{ f.cve.epss }}<span class="bar"><i style="width:{% widthratio f.cve.epss 1 100 %}%"></i></span>
+          {% elif f.source == 'nuclei' %}<span style="color:var(--faint)">scan</span>
+          {% else %}—{% endif %}
+        </span>
         <span class="asset">
           <span class="name">{{ f.asset.name }}</span>
           <span class="exposure {% if f.asset.internet_facing %}exposed{% endif %}">{% if f.asset.internet_facing %}internet-facing{% else %}internal{% endif %}</span>
@@ -162,7 +169,7 @@
         <span class="tenant">{{ f.tenant.name }}</span>
         <span class="status">{{ f.get_status_display }}</span>
       </div>
-      <div class="why"><b>{{ f.match_confidence }} confidence</b> — {{ f.match_reason }}</div>
+      <div class="why"><b>{% if f.source == 'nuclei' %}active scan{% else %}{{ f.match_confidence }} confidence{% endif %}</b> — {{ f.match_reason }}</div>
     </article>
     {% endfor %}
   </div>

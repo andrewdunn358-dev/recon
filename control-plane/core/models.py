@@ -140,7 +140,18 @@ class Finding(models.Model):
     product = models.ForeignKey(
         Product, on_delete=models.SET_NULL, null=True, blank=True, related_name="findings"
     )
-    cve = models.ForeignKey(CVE, on_delete=models.CASCADE, related_name="findings")
+    # Nullable now: an active-scan finding (exposed panel, misconfig) often has
+    # no CVE. The brief models a finding as "asset + CVE/template" (§6).
+    cve = models.ForeignKey(
+        CVE, on_delete=models.CASCADE, null=True, blank=True, related_name="findings"
+    )
+
+    # Where this finding came from, and how to describe it when there's no CVE.
+    source = models.CharField(max_length=16, default="watch")   # watch | nuclei
+    title = models.CharField(max_length=400, blank=True)
+    severity = models.CharField(max_length=16, blank=True)      # nuclei severity
+    template_id = models.CharField(max_length=200, blank=True)  # nuclei template
+    matched_at = models.CharField(max_length=400, blank=True)   # url/host:port hit
 
     priority = models.CharField(max_length=2, choices=Priority.choices, default=Priority.REVIEW)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN)
@@ -154,12 +165,18 @@ class Finding(models.Model):
     notified = models.BooleanField(default=False)
 
     class Meta:
-        unique_together = ("asset", "cve", "product")
-        ordering = ["priority", "-cve__epss"]
+        ordering = ["priority"]
 
     def __str__(self):
-        return f"{self.cve_id} on {self.asset} [{self.priority}]"
+        return f"{self.label} on {self.asset} [{self.priority}]"
 
     @property
     def cve_id(self):
-        return self.cve.cve_id
+        return self.cve.cve_id if self.cve else ""
+
+    @property
+    def label(self):
+        """What to call this finding — CVE id, else template/title."""
+        if self.cve:
+            return self.cve.cve_id
+        return self.template_id or self.title or "finding"
