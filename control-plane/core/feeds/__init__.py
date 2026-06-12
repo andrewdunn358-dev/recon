@@ -17,6 +17,7 @@ load_fixtures() seeds the same shapes from core/fixtures/ to prove the loop.
 from __future__ import annotations
 
 import csv
+import gzip
 import io
 import json
 from pathlib import Path
@@ -24,7 +25,7 @@ from pathlib import Path
 FEEDS = {
     "kev": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
     "epss": "https://epss.cyentia.com/epss_scores-current.csv.gz",
-    "cvelist": "https://github.com/CVEProject/cvelistV5",  # cloned/pulled, not fetched whole
+    "cvelist_raw": "https://raw.githubusercontent.com/CVEProject/cvelistV5/main",
     "osv": "https://api.osv.dev/v1/query",
 }
 
@@ -110,6 +111,87 @@ def _first_cwe(container: dict):
             if d.get("cweId"):
                 return d["cweId"]
     return ""
+
+
+# ---- live fetchers (used on the deployed box) -----------------------------
+#
+# cvelistV5 is a ~2GB git repo, so we DON'T clone it. Instead we fetch the
+# recent-activity delta plus individual CVE records straight from raw GitHub by
+# constructing their path. That keeps the pull light and incremental:
+#   CVE-2024-21887 -> cves/2024/21xxx/CVE-2024-21887.json
+# The actionable set each night is: everything in KEV (exploited) + everything
+# newly published/updated (the delta). Historical backfill is a separate job.
+
+def _get(url, timeout=30):
+    import requests
+    r = requests.get(url, timeout=timeout, headers={"User-Agent": "recon-feed/0.1"})
+    r.raise_for_status()
+    return r
+
+
+def fetch_kev() -> dict[str, str]:
+    """CISA KEV -> {cve_id: dateAdded}."""
+    data = _get(FEEDS["kev"]).json()
+    return {v["cveID"]: v.get("dateAdded") for v in data.get("vulnerabilities", [])}
+
+
+def fetch_epss() -> dict[str, float]:
+    """EPSS gzipped CSV -> {cve_id: score}."""
+    raw = gzip.decompress(_get(FEEDS["epss"], timeout=90).content)
+    return parse_epss(raw)
+
+
+def fetch_delta_ids() -> set[str]:
+    """Recently published/updated CVE ids from cvelistV5 cves/delta.json."""
+    delta = _get(f"{FEEDS['cvelist_raw']}/cves/delta.json").json()
+    ids = set()
+    for bucket in ("new", "updated"):
+        for item in delta.get(bucket, []) or []:
+            cid = item.get("cveId") or item.get("cveID")
+            if cid:
+                ids.add(cid)
+    return ids
+
+
+def cvelist_path(cve_id: str) -> str:
+    """Construct the raw-GitHub path for a CVE record."""
+    _, year, num = cve_id.split("-")
+    bucket = f"{int(num) // 1000}xxx"
+    return f"{FEEDS['cvelist_raw']}/cves/{year}/{bucket}/{cve_id}.json"
+
+
+def fetch_cve_record(cve_id: str) -> dict | None:
+    """Fetch + flatten one cvelistV5 record. Returns None if absent/withdrawn."""
+    try:
+        rec = _get(cvelist_path(cve_id), timeout=20).json()
+    except Exception:
+        return None
+    return parse_cve_record(rec)
+
+
+def assemble_live(delta_limit: int = 800) -> dict:
+    """
+    Build the actionable CVE set from live feeds: KEV (always) + recent delta
+    (capped). Each record is enriched with its KEV flag/date and EPSS score.
+    Per-record failures are skipped, not fatal.
+    """
+    kev = fetch_kev()
+    epss = fetch_epss()
+
+    target = set(kev)
+    delta = fetch_delta_ids()
+    target |= set(list(delta)[:delta_limit])
+
+    cves = {}
+    for cid in target:
+        flat = fetch_cve_record(cid)
+        if not flat:
+            continue
+        flat["in_kev"] = cid in kev
+        flat["kev_date_added"] = kev.get(cid)
+        flat["epss"] = epss.get(cid)
+        cves[cid] = flat
+    return {"cves": cves, "kev": kev, "epss": epss}
 
 
 # ---- offline fixtures (used in the sandbox / CI) --------------------------

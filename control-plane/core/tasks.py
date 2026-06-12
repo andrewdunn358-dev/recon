@@ -34,12 +34,9 @@ def feed_pull(use_fixtures: bool = False):
         bundle = feeds.load_fixtures()
         assembled = bundle["cves"]
     else:
-        # On the deployed box: fetch + parse each real feed here.
-        # (Left as the integration point — URLs are in feeds.FEEDS.)
-        raise NotImplementedError(
-            "Wire feeds.FEEDS fetching here on the deployed box; "
-            "sandbox/CI uses use_fixtures=True."
-        )
+        # Live: KEV + EPSS + cvelistV5 deltas, fetched from the real feeds.
+        bundle = feeds.assemble_live()
+        assembled = bundle["cves"]
 
     n = 0
     for cid, flat in assembled.items():
@@ -49,6 +46,7 @@ def feed_pull(use_fixtures: bool = False):
                 "title": flat.get("title", ""),
                 "summary": flat.get("summary", ""),
                 "in_kev": flat.get("in_kev", False),
+                "kev_date_added": flat.get("kev_date_added"),
                 "epss": flat.get("epss"),
                 "cvss": flat.get("cvss"),
                 "cwe": flat.get("cwe", ""),
@@ -59,7 +57,7 @@ def feed_pull(use_fixtures: bool = False):
             },
         )
         n += 1
-    return f"feed_pull: upserted {n} CVEs"
+    return f"feed_pull: upserted {n} CVEs ({'fixtures' if use_fixtures else 'live'})"
 
 
 @shared_task
