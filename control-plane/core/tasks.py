@@ -658,6 +658,8 @@ def sync_synthops():
         print(f"sync_synthops: /workstations fetch failed: {e}")
 
     n_servers = n_ws = n_products = errors = 0
+    # Phase A: create/update assets (sequential DB), collecting agents to query.
+    agent_jobs = []  # (asset, agent_id)
     for kind_label, d in ([("server", s) for s in server_list]
                           + [("workstation", w) for w in ws_list]):
         try:
@@ -678,20 +680,41 @@ def sync_synthops():
                 n_servers += 1
             else:
                 n_ws += 1
-
-            # Software -> products. Replace SynthOps-sourced rows; leave scan/manual.
             agent_id = d.get("tactical_rmm_agent_id")
             if agent_id:
-                asset.products.filter(source="synthops").delete()
-                for sw in so.agent_software(agent_id):
-                    row = trmm.normalise_software(sw)
-                    if not row["name"]:
-                        continue
-                    Product.objects.create(asset=asset, source="synthops", **row)
-                    n_products += 1
+                agent_jobs.append((asset, agent_id))
         except Exception as e:  # one bad device must not lose the rest
             errors += 1
             print(f"sync_synthops: skipped {d.get('hostname')}: {e}")
+
+    print(f"sync_synthops: {n_servers} servers + {n_ws} workstations as assets; "
+          f"fetching software for {len(agent_jobs)} agents (parallel)...")
+
+    # Phase B: fetch software concurrently — network only, no ORM in threads.
+    from concurrent.futures import ThreadPoolExecutor
+    software = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(so.agent_software, aid): aid for _, aid in agent_jobs}
+        for fut in futures:
+            aid = futures[fut]
+            try:
+                software[aid] = fut.result()
+            except Exception:
+                software[aid] = []
+            done += 1
+            if done % 20 == 0:
+                print(f"sync_synthops: software {done}/{len(agent_jobs)}...")
+
+    # Phase C: write products (sequential DB) from the fetched results.
+    for asset, agent_id in agent_jobs:
+        asset.products.filter(source="synthops").delete()
+        for sw in software.get(agent_id, []):
+            row = trmm.normalise_software(sw)
+            if not row["name"]:
+                continue
+            Product.objects.create(asset=asset, source="synthops", **row)
+            n_products += 1
 
     watch_loop()
     return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new), "

@@ -26,6 +26,7 @@ _verify_env = os.environ.get("SYNTHOPS_VERIFY_SSL", "true").lower()
 SYNTHOPS_VERIFY = os.environ.get("SYNTHOPS_CA_BUNDLE") or (
     _verify_env not in ("false", "0", "no"))
 TIMEOUT = 30
+SOFTWARE_TIMEOUT = 12  # fail fast on offline agents so a few duds don't stall a sync
 
 if SYNTHOPS_VERIFY is False:
     # Quiet the warning we'd otherwise emit on every call.
@@ -78,17 +79,18 @@ class SynthOps:
             raise SynthOpsError("SynthOps login returned no access_token")
         return self.token
 
-    def _get(self, path, params=None):
+    def _get(self, path, params=None, timeout=None):
         if not self.token:
             self.login()
         headers = {"Authorization": f"Bearer {self.token}"}
+        to = timeout or TIMEOUT
         r = requests.get(self._api(path), params=params, headers=headers,
-                         timeout=TIMEOUT, verify=SYNTHOPS_VERIFY)
+                         timeout=to, verify=SYNTHOPS_VERIFY)
         if r.status_code == 401:  # token expired — re-login once and retry
             self.login()
             headers = {"Authorization": f"Bearer {self.token}"}
             r = requests.get(self._api(path), params=params, headers=headers,
-                             timeout=TIMEOUT, verify=SYNTHOPS_VERIFY)
+                             timeout=to, verify=SYNTHOPS_VERIFY)
         r.raise_for_status()
         return r.json()
 
@@ -104,8 +106,10 @@ class SynthOps:
 
     def agent_software(self, agent_id):
         """Installed software for a device's TRMM agent (TRMM-native rows).
-        Best-effort: a failing/offline agent returns [] rather than aborting a sync."""
+        Best-effort + short timeout: a failing/offline agent returns [] fast
+        rather than stalling a whole-estate sync."""
         try:
-            return _as_list(self._get(f"/integrations/trmm/agent/{agent_id}/software"))
+            return _as_list(self._get(
+                f"/integrations/trmm/agent/{agent_id}/software", timeout=SOFTWARE_TIMEOUT))
         except Exception:
             return []
