@@ -613,3 +613,67 @@ def adhoc_assess(job_id: int):
         upd(status=ScanJob.Status.FAILED, phase="failed", finished_at=timezone.now())
         job.save(update_fields=["summary"])
     return f"adhoc_assess[{job_id}]: {job.status}"
+
+
+@shared_task
+def sync_synthops():
+    """
+    Read Recon's inventory from SynthOps (the source of truth) and retire the
+    direct TRMM pull: clients -> tenants, servers/workstations -> assets, and
+    each device's TRMM software list -> products. The matcher then runs over it.
+    SynthOps already aggregates TRMM, so this is one read instead of two systems.
+    """
+    from django.utils.text import slugify
+    from .models import Tenant, Asset, Product
+    from .integrations.synthops import SynthOps
+    from .integrations import trmm
+
+    so = SynthOps()
+    so.login()
+
+    # clients -> tenants (keep a map so devices attach to the right one).
+    by_client = {}
+    new_tenants = 0
+    for c in so.clients():
+        name = (c.get("name") or "Unknown").strip()
+        slug = slugify(c.get("code") or name)[:50] or "client"
+        tenant, created = Tenant.objects.get_or_create(slug=slug, defaults={"name": name})
+        if tenant.name != name:
+            tenant.name = name
+            tenant.save(update_fields=["name"])
+        by_client[c.get("id")] = tenant
+        new_tenants += int(created)
+
+    # servers + workstations -> assets.
+    n_assets = n_products = 0
+    devices = [d for d in so.servers()] + [d for d in so.workstations()]
+    for d in devices:
+        tenant = by_client.get(d.get("client_id"))
+        if tenant is None:
+            cname = (d.get("client_name") or "Unknown").strip()
+            tenant, _ = Tenant.objects.get_or_create(
+                slug=slugify(cname)[:50] or "unknown", defaults={"name": cname})
+
+        host = d.get("hostname") or str(d.get("id"))
+        public_ip = (d.get("public_ip") or "").strip()
+        target = public_ip or (d.get("ip_address") or "").strip() or host
+        asset, _ = Asset.objects.update_or_create(
+            tenant=tenant, name=host,
+            defaults={"kind": Asset.Kind.HOST, "target": target,
+                      "internet_facing": bool(public_ip), "last_seen": timezone.now()})
+        n_assets += 1
+
+        # Software -> products. Replace SynthOps-sourced rows; leave scan/manual.
+        agent_id = d.get("tactical_rmm_agent_id")
+        if agent_id:
+            asset.products.filter(source="synthops").delete()
+            for sw in so.agent_software(agent_id):
+                row = trmm.normalise_software(sw)
+                if not row["name"]:
+                    continue
+                Product.objects.create(asset=asset, source="synthops", **row)
+                n_products += 1
+
+    watch_loop()
+    return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new tenants), "
+            f"{n_assets} assets, {n_products} products")

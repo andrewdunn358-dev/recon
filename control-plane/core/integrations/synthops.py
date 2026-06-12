@@ -1,0 +1,92 @@
+"""
+SynthOps API client. Recon reads its single source of truth — clients (tenants),
+servers/workstations (assets) and per-agent software (products) — straight from
+the SynthOps FastAPI, retiring Recon's own direct TRMM pull.
+
+SynthOps already aggregates TRMM, so Recon reads it once from SynthOps rather than
+hitting TRMM separately. Auth is JWT:
+    POST /api/auth/login {email, password} -> {access_token}; then Bearer header.
+
+Config (env, set in Recon's .env):
+    SYNTHOPS_URL       e.g. https://synthops.internal
+    SYNTHOPS_USER      a dedicated SynthOps user for Recon (email or username)
+    SYNTHOPS_PASSWORD
+"""
+import os
+
+import requests
+
+SYNTHOPS_URL = os.environ.get("SYNTHOPS_URL", "").rstrip("/")
+SYNTHOPS_USER = os.environ.get("SYNTHOPS_USER", "")
+SYNTHOPS_PASSWORD = os.environ.get("SYNTHOPS_PASSWORD", "")
+TIMEOUT = 30
+
+
+class SynthOpsError(RuntimeError):
+    pass
+
+
+def _as_list(payload):
+    """SynthOps list endpoints return bare arrays; tolerate a wrapped shape too."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("items", "results", "data", "clients", "servers", "workstations"):
+            if isinstance(payload.get(key), list):
+                return payload[key]
+    return []
+
+
+class SynthOps:
+    def __init__(self, base=None, user=None, password=None):
+        self.base = (base or SYNTHOPS_URL).rstrip("/")
+        self.user = user or SYNTHOPS_USER
+        self.password = password or SYNTHOPS_PASSWORD
+        self.token = None
+
+    def _api(self, path):
+        return f"{self.base}/api{path}"
+
+    def login(self):
+        if not self.base:
+            raise SynthOpsError("SYNTHOPS_URL is not set")
+        if not self.user or not self.password:
+            raise SynthOpsError("SYNTHOPS_USER / SYNTHOPS_PASSWORD not set")
+        r = requests.post(self._api("/auth/login"),
+                          json={"email": self.user, "password": self.password},
+                          timeout=TIMEOUT)
+        if r.status_code != 200:
+            raise SynthOpsError(f"SynthOps login failed ({r.status_code})")
+        self.token = (r.json() or {}).get("access_token")
+        if not self.token:
+            raise SynthOpsError("SynthOps login returned no access_token")
+        return self.token
+
+    def _get(self, path, params=None):
+        if not self.token:
+            self.login()
+        headers = {"Authorization": f"Bearer {self.token}"}
+        r = requests.get(self._api(path), params=params, headers=headers, timeout=TIMEOUT)
+        if r.status_code == 401:  # token expired — re-login once and retry
+            self.login()
+            headers = {"Authorization": f"Bearer {self.token}"}
+            r = requests.get(self._api(path), params=params, headers=headers, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    # ---- resources --------------------------------------------------------
+    def clients(self):
+        return _as_list(self._get("/clients"))
+
+    def servers(self, client_id=None):
+        return _as_list(self._get("/servers", {"client_id": client_id} if client_id else None))
+
+    def workstations(self, client_id=None):
+        return _as_list(self._get("/workstations", {"client_id": client_id} if client_id else None))
+
+    def agent_software(self, agent_id):
+        """Installed software for a device's TRMM agent (TRMM-native rows)."""
+        try:
+            return _as_list(self._get(f"/integrations/trmm/agent/{agent_id}/software"))
+        except requests.RequestError:
+            return []

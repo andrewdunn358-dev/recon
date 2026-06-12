@@ -10,6 +10,10 @@ app.autodiscover_tasks()
 # Nightly orchestration schedule (§7). Times are placeholders — keep active
 # scans inside agreed client windows (§11).
 app.conf.beat_schedule = {
+    "nightly-synthops-sync": {
+        "task": "core.tasks.sync_synthops",
+        "schedule": crontab(hour=0, minute=30),
+    },
     "nightly-cve-mirror": {
         "task": "core.tasks.update_cve_mirror",
         "schedule": crontab(hour=1, minute=30),
