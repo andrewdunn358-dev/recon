@@ -1,0 +1,78 @@
+[
+  {
+    "cveMetadata": {"cveId": "CVE-2024-21887", "datePublished": "2024-01-10T00:00:00"},
+    "containers": {
+      "cna": {
+        "title": "Ivanti Connect Secure command injection",
+        "descriptions": [{"lang": "en", "value": "Command injection in Ivanti Connect Secure web component."}],
+        "affected": [{
+          "vendor": "Ivanti",
+          "product": "Connect Secure",
+          "cpes": ["cpe:2.3:a:ivanti:connect_secure:*:*:*:*:*:*:*:*"],
+          "versions": [{"version": "9.0", "lessThan": "22.5", "status": "affected"}]
+        }],
+        "metrics": [{"cvssV3_1": {"baseScore": 9.1}}],
+        "problemTypes": [{"descriptions": [{"cweId": "CWE-77"}]}]
+      }
+    }
+  },
+  {
+    "cveMetadata": {"cveId": "CVE-2024-3400", "datePublished": "2024-04-12T00:00:00"},
+    "containers": {
+      "cna": {
+        "title": "PAN-OS GlobalProtect command injection",
+        "descriptions": [{"lang": "en", "value": "Arbitrary file creation leading to command injection in PAN-OS GlobalProtect."}],
+        "affected": [{
+          "vendor": "Palo Alto Networks",
+          "product": "PAN-OS",
+          "versions": [{"version": "11.0", "lessThan": "11.1.2-h3", "status": "affected"}]
+        }],
+        "metrics": [{"cvssV3_1": {"baseScore": 10.0}}]
+      }
+    }
+  },
+  {
+    "cveMetadata": {"cveId": "CVE-2023-38545", "datePublished": "2023-10-11T00:00:00"},
+    "containers": {
+      "cna": {
+        "title": "curl SOCKS5 heap buffer overflow",
+        "descriptions": [{"lang": "en", "value": "SOCKS5 heap buffer overflow in curl/libcurl."}],
+        "affected": [{
+          "vendor": "curl",
+          "product": "curl",
+          "versions": [{"version": "7.69.0", "lessThanOrEqual": "8.3.0", "status": "affected"}]
+        }],
+        "metrics": [{"cvssV3_1": {"baseScore": 8.8}}]
+      }
+    }
+  },
+  {
+    "cveMetadata": {"cveId": "CVE-2024-1234", "datePublished": "2024-02-20T00:00:00"},
+    "containers": {
+      "cna": {
+        "title": "Sage 50 local privilege escalation",
+        "descriptions": [{"lang": "en", "value": "Local privilege escalation in Sage 50 Accounts service."}],
+        "affected": [{
+          "vendor": "Sage",
+          "product": "Sage 50",
+          "versions": [{"version": "28.0", "lessThan": "28.2", "status": "affected"}]
+        }],
+        "metrics": [{"cvssV3_1": {"baseScore": 7.8}}]
+      }
+    }
+  },
+  {
+    "cveMetadata": {"cveId": "CVE-2022-99999", "datePublished": "2022-06-01T00:00:00"},
+    "containers": {
+      "cna": {
+        "title": "Adobe Acrobat Reader memory disclosure (no CPE, no version range)",
+        "descriptions": [{"lang": "en", "value": "Out-of-bounds read in Adobe Acrobat Reader. Affected versions unspecified in record."}],
+        "affected": [{
+          "vendor": "Adobe",
+          "product": "Acrobat Reader",
+          "versions": []
+        }]
+      }
+    }
+  }
+]

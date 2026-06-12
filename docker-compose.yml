@@ -1,0 +1,82 @@
+# Recon — Phase 0 single-box stack (§9).
+#
+# Deliberately lean: control plane + Postgres + Redis + Celery + the scan
+# worker. Greenbone and DefectDojo are NOT here — they're Phase 1 (Greenbone is
+# the resource hog and the fiddliest thing to run in Docker; DefectDojo's
+# ingest/dedupe isn't needed to prove the watch loop). Add them as their own
+# services when you grow into the bigger onsite box.
+#
+# Migration discipline: all state is in named volumes; pin image tags before
+# you push to GitHub. Moving to bigger hardware later = move the volumes.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: recon
+      POSTGRES_USER: recon
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-recon}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  web:
+    build: ./control-plane
+    env_file: .env
+    environment:
+      DB_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on: [db, redis]
+    command: >
+      sh -c "python manage.py migrate &&
+             gunicorn recon.wsgi:application --bind 0.0.0.0:8000"
+    restart: unless-stopped
+    labels:
+      # Traefik out front like your other stacks. Set your host/TLS here.
+      - "traefik.enable=true"
+      - "traefik.http.routers.recon.rule=Host(`recon.example.org`)"
+
+  worker:
+    build: ./control-plane
+    env_file: .env
+    environment:
+      DB_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on: [db, redis]
+    command: celery -A recon worker -l info
+    restart: unless-stopped
+
+  beat:
+    build: ./control-plane
+    env_file: .env
+    environment:
+      DB_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on: [db, redis]
+    command: celery -A recon beat -l info
+    restart: unless-stopped
+
+  # Scan worker (Nuclei). Separate image so it can move to its own host / a
+  # cloud VPS with a clean egress IP later — without touching anything above.
+  scan-worker:
+    build:
+      context: .
+      dockerfile: scan-worker/Dockerfile
+    env_file: .env
+    environment:
+      DB_HOST: db
+      CELERY_BROKER_URL: redis://redis:6379/0
+    depends_on: [db, redis]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
