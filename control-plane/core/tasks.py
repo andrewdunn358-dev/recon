@@ -466,3 +466,52 @@ def load_cve_corpus(batch_size: int = 2000, limit: int = 0, rebuild_tokens: bool
 
     flush()
     return f"load_cve_corpus: {total} CVEs loaded, {tok_total} product tokens indexed"
+
+
+@shared_task
+def adhoc_assess(job_id: int):
+    """
+    Dashboard-triggered ad-hoc assessment. Enqueued to the scan queue so the
+    scan-worker (which carries subfinder/httpx/nuclei) runs it. Orchestrates
+    discovery + optional Nuclei inline and records progress on the ScanJob the
+    page is polling. Results land under the holding 'Ad-hoc' tenant.
+    """
+    from .models import ScanJob, Tenant, Asset
+    from . import discovery
+
+    job = ScanJob.objects.get(pk=job_id)
+    job.status = ScanJob.Status.RUNNING
+    job.started_at = timezone.now()
+    job.save(update_fields=["status", "started_at"])
+
+    try:
+        target = job.target.strip()
+        tenant = job.tenant
+        if tenant is None:
+            tenant, _ = Tenant.objects.get_or_create(
+                slug="ad-hoc",
+                defaults={"name": "Ad-hoc / Unassigned", "scanning_authorised": True})
+            job.tenant = tenant
+            job.save(update_fields=["tenant"])
+
+        kind = Asset.Kind.IP if discovery.looks_like_ip(target) else Asset.Kind.DOMAIN
+        Asset.objects.get_or_create(
+            tenant=tenant, target=target,
+            defaults={"name": target, "kind": kind, "internet_facing": True})
+
+        lines = [external_discovery(tenant.id, roots=[target], do_ports=job.do_ports)]
+        if job.do_nuclei:
+            base = target.split("/")[0]
+            scan_targets = [a.target for a in
+                            tenant.assets.filter(target__icontains=base) if a.target] or [target]
+            lines.append(nuclei_scan(tenant.id, only_targets=scan_targets))
+        watch_loop()  # match the freshly discovered products against the corpus
+
+        job.summary = "\n".join(lines)
+        job.status = ScanJob.Status.DONE
+    except Exception as e:  # noqa: BLE001 — surface the error to the user
+        job.summary = f"error: {e}"
+        job.status = ScanJob.Status.FAILED
+    job.finished_at = timezone.now()
+    job.save()
+    return f"adhoc_assess[{job_id}]: {job.status}"

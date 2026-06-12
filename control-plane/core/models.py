@@ -5,6 +5,7 @@ Mirrors §6 of the brief. Multi-tenant from day one (cheap to model now, painful
 to retrofit), even though the Phase 0 pilot runs a single tenant. The valuable
 join is Product x CVE — see core/matching.py.
 """
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -199,3 +200,36 @@ class CveProductToken(models.Model):
 
     def __str__(self):
         return f"{self.cve_id}:{self.token}"
+
+
+class ScanJob(models.Model):
+    """
+    A user-triggered ad-hoc assessment from the dashboard. The web app creates it
+    and enqueues the work to the scan queue (the scan-worker has the tools); the
+    worker updates status/summary here, and the page polls this row. Also serves
+    as an audit trail of who scanned what, when — useful for §11 records.
+    """
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        DONE = "done", "Done"
+        FAILED = "failed", "Failed"
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name="scan_jobs")
+    target = models.CharField(max_length=255)
+    do_ports = models.BooleanField(default=False)
+    do_nuclei = models.BooleanField(default=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    summary = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.target} [{self.status}]"

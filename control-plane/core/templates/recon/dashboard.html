@@ -17,6 +17,46 @@
     box-shadow:0 0 0 4px rgba(255,84,112,.18);
   }
 
+  .scanpanel{
+    background:linear-gradient(180deg,var(--surface-2),var(--surface));
+    border:1px solid var(--line); border-radius:12px; padding:20px 22px;
+    margin-bottom:34px;
+  }
+  .scanpanel h2{font-family:var(--display); font-size:16px; margin:0 0 4px}
+  .scanpanel .hint{color:var(--faint); font-size:12.5px; margin:0 0 16px}
+  .scanrow{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  .scanrow input[type=text]{
+    flex:1 1 320px; min-width:0; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:11px 13px;
+    font-family:var(--mono); font-size:14px;
+  }
+  .scanrow input[type=text]:focus{border-color:var(--p3); outline:none}
+  .opts{display:flex; gap:18px; flex-wrap:wrap; margin:14px 0 4px; font-size:13px; color:var(--dim)}
+  .opts label{display:flex; align-items:center; gap:7px; cursor:pointer}
+  .auth{display:flex; align-items:center; gap:8px; margin:12px 0 0; font-size:13px; color:var(--p2)}
+  .go{
+    background:var(--ok); color:#04201c; border:none; border-radius:8px;
+    padding:11px 22px; font-family:var(--display); font-weight:600; font-size:14px;
+    cursor:pointer; transition:.15s;
+  }
+  .go:hover{filter:brightness(1.08)}
+  .go:disabled{opacity:.5; cursor:not-allowed}
+  .scanout{margin-top:16px; display:none; border-top:1px solid var(--line); padding-top:14px}
+  .scanout.show{display:block}
+  .scanout .state{font-family:var(--mono); font-size:13px; color:var(--p3)}
+  .scanout .state.done{color:var(--ok)} .scanout .state.failed{color:var(--p1)}
+  .scanout pre{
+    white-space:pre-wrap; font-family:var(--mono); font-size:12.5px;
+    color:var(--dim); margin:10px 0 0; background:var(--bg);
+    border:1px solid var(--line); border-radius:8px; padding:12px;
+  }
+  .scanout .err{color:var(--p1); font-size:13px; margin-top:8px}
+  .jobs{margin-top:14px; font-size:12px; color:var(--faint)}
+  .spin{display:inline-block; width:10px; height:10px; border:2px solid var(--p3);
+    border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite;
+    vertical-align:-1px; margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
   .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:34px}
   .tile{
     background:var(--surface); border:1px solid var(--line); border-radius:12px;
@@ -135,6 +175,34 @@
     <div class="tile"><span class="tile-n">{{ total }}</span><span class="tile-l">Open findings</span></div>
   </section>
 
+  <section class="scanpanel">
+    <h2>Assess a target</h2>
+    <p class="hint">Enter a domain or IP. Enumerates the external surface, fingerprints it,
+      and (with Nuclei) checks for known issues. Results appear below and in the findings list.</p>
+    <div class="scanrow">
+      <input type="text" id="target" placeholder="example.org  or  203.0.113.10" autocomplete="off">
+      <button class="go" id="go">Assess</button>
+    </div>
+    <div class="opts">
+      <label><input type="checkbox" id="opt-nuclei" checked> Deep scan (Nuclei)</label>
+      <label><input type="checkbox" id="opt-ports"> Port sweep (naabu)</label>
+    </div>
+    <div class="auth">
+      <input type="checkbox" id="opt-auth">
+      <label for="opt-auth">I am authorised to actively scan this target (§11).</label>
+    </div>
+    <div class="scanout" id="scanout">
+      <div class="state" id="scanstate"></div>
+      <pre id="scansummary" hidden></pre>
+      <div class="err" id="scanerr" hidden></div>
+    </div>
+    {% if recent_jobs %}
+    <div class="jobs">recent:
+      {% for j in recent_jobs %}{{ j.target }} [{{ j.get_status_display }}]{% if not forloop.last %} · {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
   <div class="board-head">
     <h2>Findings</h2>
     <span class="count">sorted by exploitation risk</span>
@@ -179,4 +247,71 @@
 
   <p class="advisory">Advisory only — nothing here runs against a device without explicit human sign-off.</p>
 </main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const csrf = "{{ csrf_token }}";
+  const go = document.getElementById('go');
+  const target = document.getElementById('target');
+  const out = document.getElementById('scanout');
+  const state = document.getElementById('scanstate');
+  const summary = document.getElementById('scansummary');
+  const errBox = document.getElementById('scanerr');
+  let timer = null;
+
+  function show(){ out.classList.add('show'); }
+  function setErr(msg){ errBox.hidden = false; errBox.textContent = msg; }
+  function clearErr(){ errBox.hidden = true; errBox.textContent=''; }
+
+  async function start(){
+    const t = target.value.trim();
+    clearErr(); summary.hidden = true; summary.textContent='';
+    if(!t){ show(); setErr('Enter a domain or IP.'); return; }
+    if(!document.getElementById('opt-auth').checked){
+      show(); setErr('Tick the authorisation box first (§11).'); return; }
+    go.disabled = true; show();
+    state.className = 'state'; state.innerHTML = '<span class="spin"></span>queuing…';
+
+    const body = new URLSearchParams({
+      target: t,
+      nuclei: document.getElementById('opt-nuclei').checked ? '1':'0',
+      ports: document.getElementById('opt-ports').checked ? '1':'0',
+      authorised: '1',
+    });
+    let r;
+    try{
+      r = await fetch("{% url 'scan_start' %}", {
+        method:'POST', headers:{'X-CSRFToken':csrf,
+          'Content-Type':'application/x-www-form-urlencoded'}, body});
+    }catch(e){ go.disabled=false; setErr('Network error.'); return; }
+    const data = await r.json();
+    if(!r.ok){ go.disabled=false; state.textContent=''; setErr(data.error||'Failed to start.'); return; }
+    poll(data.job_id);
+  }
+
+  function poll(id){
+    state.innerHTML = '<span class="spin"></span>scanning '+target.value.trim()+' — this can take a few minutes…';
+    timer = setInterval(async ()=>{
+      let r;
+      try{ r = await fetch("{% url 'scan_status' %}?job="+id); }catch(e){ return; }
+      const d = await r.json();
+      if(d.status === 'done' || d.status === 'failed'){
+        clearInterval(timer); go.disabled = false;
+        state.className = 'state ' + d.status;
+        state.textContent = d.status === 'done' ? 'done — '+d.target : 'failed — '+d.target;
+        if(d.summary){ summary.hidden = false; summary.textContent = d.summary; }
+        if(d.status === 'done'){
+          state.textContent += '  · refreshing findings…';
+          setTimeout(()=>location.reload(), 1500);
+        }
+      }
+    }, 2500);
+  }
+
+  go.addEventListener('click', start);
+  target.addEventListener('keydown', e=>{ if(e.key==='Enter') start(); });
+})();
+</script>
 {% endblock %}
