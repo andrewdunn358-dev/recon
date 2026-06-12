@@ -114,6 +114,48 @@ def notify_new_findings():
     return f"notify: {count} findings notified"
 
 
+@shared_task
+def sync_trmm():
+    """
+    Pull installed-software inventory from Tactical RMM and load it as the
+    internal feeder (§4.1): clients -> tenants, agents -> assets, software ->
+    products. The same Product x CVE matcher then runs over it — no new agent,
+    Recon just reads the one you already deploy.
+    """
+    from django.utils.text import slugify
+    from django.utils import timezone as tz
+    from .models import Tenant, Asset, Product
+    from .integrations import trmm
+
+    agents = trmm.list_agents()
+    n_assets = n_products = 0
+
+    for ag in agents:
+        client = (ag.get("client_name") or "Unknown").strip()
+        tenant, _ = Tenant.objects.get_or_create(
+            slug=slugify(client)[:50] or "unknown",
+            defaults={"name": client},
+        )
+        host = ag.get("hostname") or ag.get("agent_id")
+        asset, _ = Asset.objects.update_or_create(
+            tenant=tenant, name=host,
+            defaults={"kind": Asset.Kind.HOST, "internet_facing": False,
+                      "last_seen": tz.now()},
+        )
+        n_assets += 1
+
+        # Refresh this asset's TRMM-sourced products (leave scan/manual ones).
+        asset.products.filter(source="trmm").delete()
+        for sw in trmm.get_software(ag["agent_id"]):
+            row = trmm.normalise_software(sw)
+            if not row["name"]:
+                continue
+            Product.objects.create(asset=asset, source="trmm", **row)
+            n_products += 1
+
+    return f"sync_trmm: {len(agents)} agents -> {n_assets} assets, {n_products} products"
+
+
 SEVERITY_TO_PRIORITY = {
     "critical": "P1", "high": "P2", "medium": "P3", "low": "P4", "info": "P4",
 }
