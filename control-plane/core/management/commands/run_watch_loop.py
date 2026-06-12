@@ -14,9 +14,17 @@ ORDER = ["P1", "P2", "P3", "P4", "P?"]
 class Command(BaseCommand):
     help = "Run the watch loop against the fixture feeds and print findings."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--live", action="store_true",
+            help="Pull real feeds (KEV/EPSS/cvelistV5) instead of fixtures.",
+        )
+
     def handle(self, *args, **opts):
-        self.stdout.write(self.style.WARNING("1. Pulling feeds (fixtures)..."))
-        self.stdout.write("   " + feed_pull(use_fixtures=True))
+        live = opts["live"]
+        src = "live feeds" if live else "fixtures"
+        self.stdout.write(self.style.WARNING(f"1. Pulling feeds ({src})..."))
+        self.stdout.write("   " + feed_pull(use_fixtures=not live))
         self.stdout.write(f"   CVEs in store: {CVE.objects.count()} "
                           f"({CVE.objects.filter(in_kev=True).count()} in KEV)")
         self.stdout.write(f"   Products to check: {Product.objects.count()}")
