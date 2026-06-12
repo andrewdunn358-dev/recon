@@ -165,17 +165,6 @@
 {% endblock %}
 
 {% block body %}
-<header class="topbar">
-  <div class="brand">
-    <span class="mark">RE<b>C</b>ON</span>
-    <span class="brand-sub">continuous vulnerability watch</span>
-  </div>
-  <div class="session">
-    <span class="user">{{ user.username }}</span>
-    <a class="signout" href="{% url 'logout' %}">Sign out</a>
-  </div>
-</header>
-
 <main class="wrap">
   <section class="lede">
     <h1>Triage</h1>

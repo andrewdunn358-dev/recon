@@ -35,6 +35,10 @@
     background:rgba(13,17,23,.7); z-index:10;
   }
   .brand{display:flex; align-items:baseline; gap:14px}
+  .nav{display:flex; gap:4px; margin-left:6px}
+  .nav a{font-size:13px; color:var(--dim); text-decoration:none; padding:6px 12px; border-radius:7px; transition:.15s}
+  .nav a:hover{color:var(--text)}
+  .nav a.on{color:var(--text); background:var(--surface-2)}
   .mark{
     font-family:var(--display); font-weight:700; font-size:22px;
     letter-spacing:.18em; color:var(--text);
@@ -57,6 +61,19 @@
 </style>
 </head>
 <body>
+<header class="topbar">
+  <div class="brand">
+    <a href="{% url 'dashboard' %}" style="text-decoration:none"><span class="mark">RE<b>C</b>ON</span></a>
+    <nav class="nav">
+      <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}on{% endif %}">Triage</a>
+      <a href="{% url 'clients' %}" class="{% if request.resolver_match.url_name == 'clients' or request.resolver_match.url_name == 'client_detail' %}on{% endif %}">Clients</a>
+    </nav>
+  </div>
+  <div class="session">
+    <span class="user">{{ user.username }}</span>
+    <a class="signout" href="{% url 'logout' %}">Sign out</a>
+  </div>
+</header>
 {% block body %}{% endblock %}
 {% block scripts %}{% endblock %}
 </body>

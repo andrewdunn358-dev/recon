@@ -1,0 +1,44 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — clients{% endblock %}
+{% block style %}
+  .wrap{max-width:1120px; margin:0 auto; padding:36px 28px 80px}
+  h1{font-family:var(--display); font-size:26px; margin:0 0 4px}
+  .sub{color:var(--faint); font-size:13px; margin:0 0 28px}
+  .clist{border:1px solid var(--line); border-radius:12px; overflow:hidden}
+  .crow{display:grid; grid-template-columns:2fr 1fr 1.3fr 1fr 0.8fr; gap:12px;
+    align-items:center; padding:14px 18px; border-bottom:1px solid var(--line);
+    text-decoration:none; color:var(--text); transition:.12s}
+  .crow:last-child{border-bottom:none}
+  a.crow:hover{background:var(--surface-2)}
+  .crow.head{background:var(--surface); color:var(--faint); font-size:11px;
+    letter-spacing:.07em; text-transform:uppercase}
+  .crow .num{font-family:var(--mono); color:var(--dim)}
+  .cname{font-weight:500}
+  .badge{font-size:10px; color:var(--p2); border:1px solid var(--p2); border-radius:5px;
+    padding:1px 6px; margin-left:8px; letter-spacing:.04em}
+  .p1n{font-family:var(--mono); font-weight:700; color:var(--p1)}
+  .p1n.zero{color:var(--faint); font-weight:400}
+{% endblock %}
+
+{% block body %}
+<main class="wrap">
+  <h1>Clients</h1>
+  <p class="sub">{{ tenants|length }} client{{ tenants|length|pluralize }} — sorted by what's on fire</p>
+  <div class="clist">
+    <div class="crow head">
+      <span>Client</span><span>Assets</span><span>Internet-facing</span><span>Findings</span><span>P1</span>
+    </div>
+    {% for t in tenants %}
+    <a class="crow" href="{% url 'client_detail' t.slug %}">
+      <span class="cname">{{ t.name }}{% if not t.scanning_authorised %}<span class="badge">scan off</span>{% endif %}</span>
+      <span class="num">{{ t.asset_count }}</span>
+      <span class="num">{{ t.exposed_count }}</span>
+      <span class="num">{{ t.finding_count }}</span>
+      <span class="p1n {% if not t.p1_count %}zero{% endif %}">{{ t.p1_count|default:"—" }}</span>
+    </a>
+    {% empty %}
+    <div class="crow"><span>No clients yet. Run sync_synthops or add one in admin.</span></div>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — {{ tenant.name }}{% endblock %}
+{% block style %}
+  .wrap{max-width:1120px; margin:0 auto; padding:30px 28px 80px}
+  .back{font-size:12.5px; color:var(--dim); text-decoration:none}
+  .back:hover{color:var(--text)}
+  h1{font-family:var(--display); font-size:24px; margin:10px 0 4px}
+  .meta{color:var(--faint); font-size:12.5px; margin:0 0 26px; font-family:var(--mono)}
+  .meta .auth-on{color:var(--ok)} .meta .auth-off{color:var(--p2)}
+  h2{font-family:var(--display); font-size:15px; margin:30px 0 12px}
+  .alist{border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .arow{display:grid; grid-template-columns:1.4fr .8fr 1.4fr 1fr .7fr .7fr .9fr; gap:10px;
+    align-items:center; padding:11px 16px; border-bottom:1px solid var(--line); font-size:13px}
+  .arow:last-child{border-bottom:none}
+  .arow.head{background:var(--surface); color:var(--faint); font-size:10.5px;
+    letter-spacing:.06em; text-transform:uppercase}
+  .arow .mono{font-family:var(--mono); color:var(--dim)}
+  .exp{font-size:11px; color:var(--faint)} .exp.on{color:var(--p2)}
+  .assess{background:none; border:1px solid var(--line); color:var(--p3);
+    font-size:11.5px; border-radius:6px; padding:4px 11px; cursor:pointer; transition:.12s}
+  .assess:hover{border-color:var(--p3); background:rgba(84,185,255,.08)}
+  .assess:disabled{opacity:.5; cursor:default}
+  .ast{font-size:11px; font-family:var(--mono); color:var(--p3)}
+  .fcard{display:flex; align-items:center; gap:12px; padding:10px 14px; font-size:13px;
+    border:1px solid var(--line); border-left:3px solid var(--c,var(--faint));
+    border-radius:7px; margin-bottom:7px}
+  .fcard .fp{font-family:var(--mono); font-weight:700; min-width:28px}
+  .fcard .fl{font-family:var(--mono)} .fcard .fk{color:var(--p1); font-size:10px; font-weight:600}
+  .fcard .fa{color:var(--faint); font-size:11.5px}
+  .fcard .fr{color:var(--dim); font-size:11.5px; margin-left:auto; max-width:46%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .empty{color:var(--faint); font-size:13px; padding:14px 0}
+{% endblock %}
+
+{% block body %}
+<main class="wrap">
+  <a class="back" href="{% url 'clients' %}">← Clients</a>
+  <h1>{{ tenant.name }}</h1>
+  <p class="meta">{{ tenant.slug }} · scanning
+    {% if tenant.scanning_authorised %}<span class="auth-on">authorised</span>{% else %}<span class="auth-off">not authorised (§11)</span>{% endif %}
+    · {{ kev_count }} exploited now · {{ review_count }} need review</p>
+
+  <h2>Assets ({{ assets|length }})</h2>
+  <div class="alist">
+    <div class="arow head">
+      <span>Asset</span><span>Kind</span><span>Target</span><span>Exposure</span>
+      <span>Software</span><span>Findings</span><span></span>
+    </div>
+    {% for a in assets %}
+    <div class="arow">
+      <span>{{ a.name }}</span>
+      <span class="mono">{{ a.get_kind_display }}</span>
+      <span class="mono">{{ a.target|default:"—" }}</span>
+      <span class="exp {% if a.internet_facing %}on{% endif %}">{% if a.internet_facing %}internet-facing{% else %}internal{% endif %}</span>
+      <span class="mono">{{ a.products.count }}</span>
+      <span class="mono">{{ a.findings.count }}</span>
+      <span>{% if a.target %}<button class="assess" data-target="{{ a.target }}">Assess</button><span class="ast"></span>{% endif %}</span>
+    </div>
+    {% empty %}
+    <div class="arow"><span>No assets. Run sync_synthops, or assess a target from Triage.</span></div>
+    {% endfor %}
+  </div>
+
+  <h2>Findings ({{ findings|length }})</h2>
+  {% for f in findings %}
+  <div class="fcard" style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
+    <span class="fp" style="color:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">{{ f.priority }}</span>
+    <span class="fl">{{ f.label }}</span>
+    {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
+    <span class="fa">{{ f.asset.name }}</span>
+    <span class="fr">{{ f.match_reason }}</span>
+  </div>
+  {% empty %}
+  <p class="empty">No findings for this client yet.</p>
+  {% endfor %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const csrf = "{{ csrf_token }}";
+  const slug = "{{ tenant.slug }}";
+  document.querySelectorAll('.assess').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const target = btn.dataset.target;
+      if(!confirm("Actively scan "+target+"?\n\nYou confirm you are authorised to assess this target (§11).")) return;
+      const note = btn.nextElementSibling;
+      btn.disabled = true; note.textContent = ' queuing…';
+      const body = new URLSearchParams({target, tenant: slug, nuclei:'1', authorised:'1'});
+      let r;
+      try{ r = await fetch("{% url 'scan_start' %}", {method:'POST',
+        headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}, body}); }
+      catch(e){ note.textContent=' network error'; btn.disabled=false; return; }
+      const d = await r.json();
+      if(!r.ok){ note.textContent=' '+(d.error||'failed'); btn.disabled=false; return; }
+      const id = d.job_id;
+      const t = setInterval(async ()=>{
+        const s = await (await fetch("{% url 'scan_status' %}?job="+id)).json();
+        note.textContent = ' '+(s.phase||s.status);
+        if(s.status==='done'||s.status==='failed'){ clearInterval(t);
+          note.textContent = ' '+s.status+' — refreshing…'; setTimeout(()=>location.reload(), 1500); }
+      }, 2500);
+    });
+  });
+})();
+</script>
+{% endblock %}
