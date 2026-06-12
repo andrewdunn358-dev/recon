@@ -41,6 +41,19 @@ def tokens(s: str) -> set[str]:
     return set(normalise(s).split())
 
 
+def affected_product_tokens(affected) -> set[str]:
+    """
+    Every distinct normalised product token across a CVE's affected[] entries.
+    This is exactly the left side of the matcher's `p_name_t & a_product_t` gate,
+    so indexing these tokens lets us pre-select the same candidates by overlap.
+    """
+    toks: set[str] = set()
+    for aff in affected or []:
+        toks |= tokens(aff.get("product", ""))
+    # Drop pure-numeric and 1-char tokens — too noisy to index usefully.
+    return {t for t in toks if len(t) > 1 and not t.isdigit()}
+
+
 # ----- version handling ----------------------------------------------------
 
 def _parse_version(v: str):

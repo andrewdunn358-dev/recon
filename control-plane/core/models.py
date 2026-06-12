@@ -176,3 +176,26 @@ class Finding(models.Model):
         if self.cve_id:
             return self.cve_id
         return self.template_id or self.title or "finding"
+
+
+class CveProductToken(models.Model):
+    """
+    Inverted index: one row per (CVE, affected-product token). Lets the matcher
+    pull candidate CVEs for a product by token overlap instead of scanning the
+    whole CVE table — essential once the full cvelistV5 corpus (~250k+) is loaded.
+
+    The token is the normalised affected-product name (matching.tokens), which is
+    exactly the gate match_product_to_cve applies, so the candidate set it yields
+    is the same set the matcher would have kept after a full scan.
+    """
+    cve = models.ForeignKey(CVE, on_delete=models.CASCADE, related_name="product_tokens")
+    token = models.CharField(max_length=64, db_index=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["token"])]
+        constraints = [
+            models.UniqueConstraint(fields=["cve", "token"], name="uniq_cve_token"),
+        ]
+
+    def __str__(self):
+        return f"{self.cve_id}:{self.token}"

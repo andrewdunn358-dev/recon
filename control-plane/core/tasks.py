@@ -45,14 +45,48 @@ def update_cve_mirror():
     return f"update_cve_mirror: {action} FAILED — {proc.stderr.strip()[-300:]}"
 
 
+def upsert_cve(flat: dict):
+    """
+    Write one CVE record and refresh its product-token index. Shared by the
+    incremental feed pull and (a bulk variant of) the full-corpus loader so the
+    index never drifts from the affected[] data.
+    """
+    from .models import CVE, CveProductToken
+    from .matching import affected_product_tokens
+
+    cid = flat["cve_id"] if "cve_id" in flat else flat.get("id")
+    affected = flat.get("affected", [])
+    CVE.objects.update_or_create(
+        cve_id=cid,
+        defaults={
+            "title": flat.get("title", ""),
+            "summary": flat.get("summary", ""),
+            "in_kev": flat.get("in_kev", False),
+            "kev_date_added": flat.get("kev_date_added"),
+            "epss": flat.get("epss"),
+            "cvss": flat.get("cvss"),
+            "cwe": flat.get("cwe", ""),
+            "affected": affected,
+            "sources": flat.get("sources", []),
+            "published": flat.get("published"),
+            "last_modified": timezone.now(),
+        },
+    )
+    CveProductToken.objects.filter(cve_id=cid).delete()
+    toks = affected_product_tokens(affected)
+    if toks:
+        CveProductToken.objects.bulk_create(
+            [CveProductToken(cve_id=cid, token=t) for t in toks],
+            ignore_conflicts=True,
+        )
+
+
 @shared_task
 def feed_pull(use_fixtures: bool = False):
     """
     Refresh the CVE store from the multi-source feed mix. In the sandbox call
     with use_fixtures=True; in production leave it False to hit the real feeds.
     """
-    from .models import CVE
-
     if use_fixtures:
         bundle = feeds.load_fixtures()
         src = "fixtures"
@@ -69,22 +103,8 @@ def feed_pull(use_fixtures: bool = False):
 
     n = 0
     for cid, flat in assembled.items():
-        CVE.objects.update_or_create(
-            cve_id=cid,
-            defaults={
-                "title": flat.get("title", ""),
-                "summary": flat.get("summary", ""),
-                "in_kev": flat.get("in_kev", False),
-                "kev_date_added": flat.get("kev_date_added"),
-                "epss": flat.get("epss"),
-                "cvss": flat.get("cvss"),
-                "cwe": flat.get("cwe", ""),
-                "affected": flat.get("affected", []),
-                "sources": flat.get("sources", []),
-                "published": flat.get("published"),
-                "last_modified": timezone.now(),
-            },
-        )
+        flat.setdefault("cve_id", cid)
+        upsert_cve(flat)
         n += 1
     return f"feed_pull: upserted {n} CVEs ({src})"
 
@@ -94,15 +114,25 @@ def watch_loop():
     """
     The core loop. For every product each tenant runs, look for matching CVEs,
     prioritise, and raise/refresh a Finding. Returns a summary string.
+
+    Candidate CVEs come from the product-token index (CveProductToken), so this
+    scales to the full corpus: we only run the fine-grained matcher against CVEs
+    whose affected products share a token with the product name, not all 250k.
     """
-    from .models import Product, CVE, Finding
+    from .models import Product, CVE, Finding, CveProductToken
+    from .matching import tokens as name_tokens
 
     raised, refreshed = 0, 0
-    cves = list(CVE.objects.all())
 
     for product in Product.objects.select_related("asset", "asset__tenant"):
         asset = product.asset
-        for cve in cves:
+        ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+        if not ptoks:
+            continue
+        cand_ids = (CveProductToken.objects
+                    .filter(token__in=ptoks)
+                    .values_list("cve_id", flat=True).distinct())
+        for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
             m = match_product_to_cve(product, cve)
             if not m:
                 continue
@@ -368,3 +398,71 @@ def external_discovery(tenant_id: int, roots=None, do_ports: bool = False):
     port_note = f", {sum(len(v) for v in ports.values())} open ports" if do_ports else ""
     return (f"external_discovery: {tenant.slug} — {len(hosts)} hosts enumerated, "
             f"{len(live)} live, +{new_assets} assets, +{new_products} products{port_note}")
+
+
+@shared_task
+def load_cve_corpus(batch_size: int = 2000, limit: int = 0, rebuild_tokens: bool = True):
+    """
+    Load the ENTIRE local cvelistV5 mirror into the CVE store + token index, so
+    matching runs against every CVE on file — not just KEV-plus-recent. One-off
+    after the first mirror clone; cheap to re-run (it upserts). KEV/EPSS are
+    folded in from their small live feeds.
+
+    Heavy but bounded: ~250k records, processed in batches. Run it in the
+    background (worker) rather than blocking a request.
+    """
+    from pathlib import Path as _Path
+    from .models import CVE, CveProductToken
+    from .matching import affected_product_tokens
+
+    if not feeds.mirror_present():
+        return "load_cve_corpus: no local mirror — run update_cve_mirror first"
+
+    kev = feeds.fetch_kev()
+    epss = feeds.fetch_epss()
+
+    if rebuild_tokens:
+        CveProductToken.objects.all().delete()
+
+    cve_fields = ["title", "summary", "in_kev", "kev_date_added", "epss", "cvss",
+                  "cwe", "affected", "sources", "published", "last_modified"]
+    root = _Path(feeds.CVELIST_DIR, "cves")
+    total = tok_total = 0
+    cve_batch, tok_batch = [], []
+
+    def flush():
+        nonlocal cve_batch, tok_batch, total, tok_total
+        if cve_batch:
+            CVE.objects.bulk_create(
+                cve_batch, update_conflicts=True,
+                unique_fields=["cve_id"], update_fields=cve_fields)
+            total += len(cve_batch)
+        if tok_batch:
+            CveProductToken.objects.bulk_create(tok_batch, ignore_conflicts=True)
+            tok_total += len(tok_batch)
+        cve_batch, tok_batch = [], []
+
+    for path in root.glob("*/*/CVE-*.json"):
+        try:
+            flat = feeds.parse_cve_record(json.loads(path.read_text()))
+        except Exception:
+            continue
+        cid = flat.get("cve_id") or path.stem
+        cve_batch.append(CVE(
+            cve_id=cid,
+            title=flat.get("title", ""), summary=flat.get("summary", ""),
+            in_kev=cid in kev, kev_date_added=kev.get(cid),
+            epss=epss.get(cid), cvss=flat.get("cvss"), cwe=flat.get("cwe", ""),
+            affected=flat.get("affected", []), sources=flat.get("sources", []),
+            published=flat.get("published"), last_modified=timezone.now(),
+        ))
+        for t in affected_product_tokens(flat.get("affected", [])):
+            tok_batch.append(CveProductToken(cve_id=cid, token=t))
+
+        if len(cve_batch) >= batch_size:
+            flush()
+        if limit and total >= limit:
+            break
+
+    flush()
+    return f"load_cve_corpus: {total} CVEs loaded, {tok_total} product tokens indexed"
