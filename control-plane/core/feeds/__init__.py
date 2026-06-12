@@ -86,6 +86,15 @@ def parse_cve_record(record: dict) -> dict:
     descs = cna.get("descriptions", [])
     summary = next((d.get("value", "") for d in descs if d.get("lang", "").startswith("en")), "")
 
+    # Reference URLs — vendor advisories, patches, mitigations. The best
+    # remediation pointers we have; surface them on findings.
+    refs = []
+    for src in (cna, *adps):
+        for r in src.get("references", []) or []:
+            url = r.get("url", "")
+            if url and url not in refs:
+                refs.append(url)
+
     return {
         "cve_id": meta.get("cveId", ""),
         "title": cna.get("title", "")[:500],
@@ -93,6 +102,7 @@ def parse_cve_record(record: dict) -> dict:
         "cvss": cvss,
         "cwe": cwe,
         "affected": affected,
+        "references": refs[:12],
         "sources": ["cvelistV5"],
         "published": (meta.get("datePublished") or "")[:10] or None,
     }

@@ -67,6 +67,7 @@ def upsert_cve(flat: dict):
             "cvss": flat.get("cvss"),
             "cwe": flat.get("cwe", ""),
             "affected": affected,
+            "references": flat.get("references", []),
             "sources": flat.get("sources", []),
             "published": flat.get("published"),
             "last_modified": timezone.now(),
@@ -357,6 +358,8 @@ def ingest_nuclei_record(tenant, by_target, r, scan_job=None):
             "severity": severity, "priority": SEVERITY_TO_PRIORITY.get(severity, "P4"),
             "match_confidence": "scan",
             "match_reason": f"Nuclei: {info.get('name','')} ({template_id})"[:300],
+            "references": (info.get("reference") or [])[:6],
+            "remediation": (info.get("remediation") or "")[:1000],
             "last_seen": timezone.now(), "scan_job": scan_job,
         })
     return f
@@ -452,7 +455,7 @@ def load_cve_corpus(batch_size: int = 2000, limit: int = 0, rebuild_tokens: bool
         CveProductToken.objects.all().delete()
 
     cve_fields = ["title", "summary", "in_kev", "kev_date_added", "epss", "cvss",
-                  "cwe", "affected", "sources", "published", "last_modified"]
+                  "cwe", "affected", "references", "sources", "published", "last_modified"]
     root = _Path(feeds.CVELIST_DIR, "cves")
     total = tok_total = 0
     cve_batch, tok_batch = [], []
@@ -480,7 +483,8 @@ def load_cve_corpus(batch_size: int = 2000, limit: int = 0, rebuild_tokens: bool
             title=flat.get("title", ""), summary=flat.get("summary", ""),
             in_kev=cid in kev, kev_date_added=kev.get(cid),
             epss=epss.get(cid), cvss=flat.get("cvss"), cwe=flat.get("cwe", ""),
-            affected=flat.get("affected", []), sources=flat.get("sources", []),
+            affected=flat.get("affected", []), references=flat.get("references", []),
+            sources=flat.get("sources", []),
             published=flat.get("published"), last_modified=timezone.now(),
         ))
         for t in affected_product_tokens(flat.get("affected", [])):

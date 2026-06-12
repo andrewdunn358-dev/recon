@@ -68,6 +68,14 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 
   .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:34px}
+
+  .fixtext{font-size:12.5px; color:var(--dim); margin:8px 0 0; padding-left:14px;
+    border-left:2px solid var(--ok)}
+  .fix{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px}
+  .fixlabel{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint)}
+  .fixlink{font-size:12px; font-family:var(--mono); color:var(--p3); text-decoration:none;
+    border:1px solid var(--line); border-radius:6px; padding:3px 9px; transition:.15s}
+  .fixlink:hover{border-color:var(--p3); background:rgba(84,185,255,.08)}
   .tile{
     background:var(--surface); border:1px solid var(--line); border-radius:12px;
     padding:18px 20px; display:flex; flex-direction:column; gap:6px;
@@ -249,6 +257,12 @@
         <span class="status">{{ f.get_status_display }}</span>
       </div>
       <div class="why"><b>{% if f.source == 'nuclei' %}active scan{% else %}{{ f.match_confidence }} confidence{% endif %}</b> — {{ f.match_reason }}</div>
+      {% if f.remediation %}<div class="fixtext">{{ f.remediation }}</div>{% endif %}
+      {% with links=f.remediation_links %}{% if links %}
+      <div class="fix"><span class="fixlabel">Remediation</span>
+        {% for l in links %}<a class="fixlink" href="{{ l.url }}" target="_blank" rel="noopener noreferrer">{{ l.label }} ↗</a>{% endfor %}
+      </div>
+      {% endif %}{% endwith %}
     </article>
     {% endfor %}
   </div>

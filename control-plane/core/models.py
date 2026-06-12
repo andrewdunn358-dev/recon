@@ -89,6 +89,7 @@ class CVE(models.Model):
     # Structured affected-product data for matching. List of dicts:
     # {"vendor":..., "product":..., "cpe":..., "versions":[{...range...}]}
     affected = models.JSONField(default=list, blank=True)
+    references = models.JSONField(default=list, blank=True)  # advisory/patch URLs
 
     sources = models.JSONField(default=list, blank=True)  # provenance
     published = models.DateField(null=True, blank=True)
@@ -160,6 +161,10 @@ class Finding(models.Model):
     # How confident the Product x CVE match was. Low-confidence => human review.
     match_confidence = models.CharField(max_length=10, blank=True)  # high/medium/low
     match_reason = models.CharField(max_length=300, blank=True)
+    # Remediation pointers. For scan findings these come from the Nuclei template;
+    # for CVE findings we also derive authoritative links from the CVE.
+    references = models.JSONField(default=list, blank=True)
+    remediation = models.TextField(blank=True)
 
     first_seen = models.DateTimeField(default=timezone.now)
     last_seen = models.DateTimeField(default=timezone.now)
@@ -181,6 +186,32 @@ class Finding(models.Model):
         if self.cve_id:
             return self.cve_id
         return self.template_id or self.title or "finding"
+
+    @property
+    def remediation_links(self):
+        """
+        A curated list of {label, url} pointing at fix guidance. CVE findings get
+        authoritative deep links (NVD / CVE.org / KEV) plus the CVE's own advisory
+        references; scan findings get the Nuclei template's references.
+        """
+        out, seen = [], set()
+
+        def add(label, url):
+            if url and url not in seen:
+                seen.add(url)
+                out.append({"label": label, "url": url})
+
+        if self.cve_id:
+            add("NVD", f"https://nvd.nist.gov/vuln/detail/{self.cve_id}")
+            add("CVE.org", f"https://www.cve.org/CVERecord?id={self.cve_id}")
+            if self.cve and self.cve.in_kev:
+                add("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog")
+            for url in (self.cve.references if self.cve else [])[:4]:
+                add("advisory", url)
+
+        for url in (self.references or [])[:4]:
+            add("reference", url)
+        return out
 
 
 class CveProductToken(models.Model):
