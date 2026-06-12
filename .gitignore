@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 control-plane/.venv/
 *.log
+
+# native deploy artifacts
+staticfiles/
+control-plane/staticfiles/

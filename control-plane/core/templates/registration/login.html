@@ -1,0 +1,58 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — sign in{% endblock %}
+
+{% block style %}
+  body{display:grid; place-items:center; padding:24px}
+  .card{
+    width:100%; max-width:380px; background:var(--surface);
+    border:1px solid var(--line); border-radius:16px; padding:38px 34px;
+  }
+  .card .mark{
+    font-family:var(--display); font-weight:700; font-size:24px;
+    letter-spacing:.18em; display:block; margin-bottom:6px;
+  }
+  .card .mark b{color:var(--ok)}
+  .card .sub{font-size:12.5px; color:var(--faint); margin-bottom:28px; letter-spacing:.03em}
+  label{display:block; font-size:12px; color:var(--dim); margin:0 0 7px; letter-spacing:.03em}
+  .field{margin-bottom:18px}
+  input{
+    width:100%; background:var(--bg); border:1px solid var(--line);
+    border-radius:9px; padding:11px 13px; color:var(--text);
+    font-family:var(--body); font-size:14px; transition:border-color .15s;
+  }
+  input:focus{outline:none; border-color:var(--ok)}
+  button{
+    width:100%; margin-top:6px; background:var(--ok); color:#04201c;
+    border:none; border-radius:9px; padding:12px; font-family:var(--display);
+    font-weight:600; font-size:14px; letter-spacing:.02em; cursor:pointer;
+    transition:filter .15s;
+  }
+  button:hover{filter:brightness(1.08)}
+  .err{
+    background:rgba(255,84,112,.1); border:1px solid rgba(255,84,112,.35);
+    color:#ffb3c0; font-size:13px; padding:10px 13px; border-radius:9px; margin-bottom:20px;
+  }
+{% endblock %}
+
+{% block body %}
+<form class="card" method="post" action="{% url 'login' %}">
+  {% csrf_token %}
+  <span class="mark">RE<b>C</b>ON</span>
+  <div class="sub">Sign in to the vulnerability console</div>
+
+  {% if form.errors %}
+  <div class="err">That username and password don't match. Try again.</div>
+  {% endif %}
+
+  <div class="field">
+    <label for="id_username">Username</label>
+    {{ form.username }}
+  </div>
+  <div class="field">
+    <label for="id_password">Password</label>
+    {{ form.password }}
+  </div>
+  <input type="hidden" name="next" value="{{ next }}">
+  <button type="submit">Sign in</button>
+</form>
+{% endblock %}

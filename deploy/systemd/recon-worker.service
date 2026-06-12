@@ -1,0 +1,17 @@
+[Unit]
+Description=Recon Celery worker
+After=network.target postgresql.service redis-server.service
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=recon
+Group=recon
+WorkingDirectory=/opt/recon/control-plane
+EnvironmentFile=/opt/recon/control-plane/.env
+ExecStart=/opt/recon/control-plane/.venv/bin/celery -A recon worker -l info
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Recon Celery beat (nightly orchestration)
+After=network.target redis-server.service
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=recon
+Group=recon
+WorkingDirectory=/opt/recon/control-plane
+EnvironmentFile=/opt/recon/control-plane/.env
+ExecStart=/opt/recon/control-plane/.venv/bin/celery -A recon beat -l info
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -36,6 +36,7 @@ services:
     depends_on: [db, redis]
     command: >
       sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
              gunicorn recon.wsgi:application --bind 0.0.0.0:8000"
     restart: unless-stopped
     labels:

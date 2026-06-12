@@ -1,0 +1,175 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — triage{% endblock %}
+
+{% block style %}
+  .topbar{margin-bottom:0}
+  .lede{margin-bottom:28px}
+  .lede h1{
+    font-family:var(--display); font-weight:600; font-size:13px;
+    text-transform:uppercase; letter-spacing:.22em; color:var(--faint);
+    margin:0 0 10px;
+  }
+  .lede-line{font-size:21px; font-weight:400; color:var(--dim); margin:0; max-width:62ch}
+  .lede-line .hot{color:var(--text); font-weight:600}
+  .lede-line .hot::before{
+    content:""; display:inline-block; width:8px; height:8px; border-radius:50%;
+    background:var(--p1); margin-right:9px; vertical-align:middle;
+    box-shadow:0 0 0 4px rgba(255,84,112,.18);
+  }
+
+  .tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:34px}
+  .tile{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:18px 20px; display:flex; flex-direction:column; gap:6px;
+  }
+  .tile-n{font-family:var(--display); font-size:32px; font-weight:600; line-height:1}
+  .tile-l{font-size:12px; color:var(--dim); letter-spacing:.02em}
+  .tile-p1 .tile-n{color:var(--p1)} .tile-review .tile-n{color:var(--review)}
+  .tile-exposed .tile-n{color:var(--p2)}
+
+  .board-head{
+    display:flex; align-items:baseline; justify-content:space-between; margin:0 0 14px;
+  }
+  .board-head h2{
+    font-family:var(--display); font-weight:600; font-size:15px; margin:0;
+    letter-spacing:.02em;
+  }
+  .board-head .count{font-size:12px; color:var(--faint); font-family:var(--mono)}
+
+  .findings{display:flex; flex-direction:column; gap:8px}
+  .finding{
+    background:var(--surface); border:1px solid var(--line);
+    border-left:3px solid var(--c, var(--line)); border-radius:10px;
+    padding:14px 18px; transition:border-color .15s, transform .15s;
+  }
+  .finding:hover{transform:translateX(2px)}
+  .finding.head{
+    background:transparent; border:none; padding:4px 18px; border-radius:0;
+  }
+  .row{
+    display:grid;
+    grid-template-columns:108px 168px 96px minmax(0,1fr) 150px 84px;
+    align-items:center; gap:18px;
+  }
+  .head .row{font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:var(--faint)}
+
+  .pri{
+    font-family:var(--mono); font-size:12px; font-weight:700; padding:4px 9px;
+    border-radius:6px; display:inline-block; white-space:nowrap;
+    color:var(--c); background:color-mix(in srgb, var(--c) 14%, transparent);
+    border:1px solid color-mix(in srgb, var(--c) 35%, transparent);
+  }
+  .p-P1{--c:var(--p1)} .p-P2{--c:var(--p2)} .p-P3{--c:var(--p3)}
+  .p-P4{--c:var(--faint)} .p-PQ{--c:var(--review)}
+
+  .cve{font-family:var(--mono); font-size:14px; display:flex; align-items:center; gap:8px}
+  .kev{
+    font-size:10px; font-weight:700; letter-spacing:.06em; color:var(--p1);
+    background:rgba(255,84,112,.13); border:1px solid rgba(255,84,112,.4);
+    padding:2px 6px; border-radius:5px;
+  }
+  .epss{font-family:var(--mono); font-size:13px; color:var(--dim)}
+  .epss .bar{
+    display:block; height:3px; border-radius:2px; margin-top:5px;
+    background:var(--line); position:relative; overflow:hidden;
+  }
+  .epss .bar i{position:absolute; inset:0 auto 0 0; background:var(--p2); border-radius:2px}
+  .asset{display:flex; flex-direction:column; gap:3px; min-width:0}
+  .asset .name{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .exposure{font-size:11px; color:var(--faint)}
+  .exposure.exposed{color:var(--p2)}
+  .tenant{font-size:13px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .status{
+    font-size:12px; font-family:var(--mono); color:var(--dim);
+    text-align:right;
+  }
+  .why{
+    margin-top:9px; padding-top:9px; border-top:1px solid var(--line);
+    font-size:12.5px; color:var(--faint); font-family:var(--mono);
+  }
+  .why b{color:var(--dim); font-weight:500}
+
+  .empty{
+    text-align:center; padding:60px 20px; color:var(--dim);
+    border:1px dashed var(--line); border-radius:12px;
+  }
+  .advisory{
+    margin-top:30px; font-size:12px; color:var(--faint); text-align:center;
+    border-top:1px solid var(--line); padding-top:18px;
+  }
+
+  @media (max-width:820px){
+    .tiles{grid-template-columns:repeat(2,1fr)}
+    .head{display:none}
+    .row{grid-template-columns:1fr 1fr; gap:10px}
+    .status{text-align:left}
+  }
+{% endblock %}
+
+{% block body %}
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">RE<b>C</b>ON</span>
+    <span class="brand-sub">continuous vulnerability watch</span>
+  </div>
+  <div class="session">
+    <span class="user">{{ user.username }}</span>
+    <a class="signout" href="{% url 'logout' %}">Sign out</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="lede">
+    <h1>Triage</h1>
+    <p class="lede-line">
+      {% if kev_count %}<span class="hot">{{ kev_count }} being exploited right now.</span>{% else %}Nothing is being actively exploited.{% endif %}
+      {% if review_count %}{{ review_count }} need a human.{% endif %}
+      {{ total }} open finding{{ total|pluralize }} in total.
+    </p>
+  </section>
+
+  <section class="tiles">
+    <div class="tile tile-p1"><span class="tile-n">{{ kev_count }}</span><span class="tile-l">Exploited now (KEV)</span></div>
+    <div class="tile tile-review"><span class="tile-n">{{ review_count }}</span><span class="tile-l">Needs human review</span></div>
+    <div class="tile tile-exposed"><span class="tile-n">{{ exposed_count }}</span><span class="tile-l">Internet-facing assets</span></div>
+    <div class="tile"><span class="tile-n">{{ total }}</span><span class="tile-l">Open findings</span></div>
+  </section>
+
+  <div class="board-head">
+    <h2>Findings</h2>
+    <span class="count">sorted by exploitation risk</span>
+  </div>
+
+  {% if findings %}
+  <div class="findings">
+    <div class="finding head">
+      <div class="row">
+        <span>Priority</span><span>CVE</span><span>EPSS</span>
+        <span>Asset</span><span>Tenant</span><span>Status</span>
+      </div>
+    </div>
+    {% for f in findings %}
+    <article class="finding"
+             style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
+      <div class="row">
+        <span class="pri">{{ f.priority }}</span>
+        <span class="cve">{{ f.cve_id }}{% if f.cve.in_kev %}<span class="kev">KEV</span>{% endif %}</span>
+        <span class="epss">{% if f.cve.epss != None %}{{ f.cve.epss }}<span class="bar"><i style="width:{% widthratio f.cve.epss 1 100 %}%"></i></span>{% else %}—{% endif %}</span>
+        <span class="asset">
+          <span class="name">{{ f.asset.name }}</span>
+          <span class="exposure {% if f.asset.internet_facing %}exposed{% endif %}">{% if f.asset.internet_facing %}internet-facing{% else %}internal{% endif %}</span>
+        </span>
+        <span class="tenant">{{ f.tenant.name }}</span>
+        <span class="status">{{ f.get_status_display }}</span>
+      </div>
+      <div class="why"><b>{{ f.match_confidence }} confidence</b> — {{ f.match_reason }}</div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">No findings yet. Run a scan or wait for the nightly watch to match new CVEs against your inventory.</div>
+  {% endif %}
+
+  <p class="advisory">Advisory only — nothing here runs against a device without explicit human sign-off.</p>
+</main>
+{% endblock %}

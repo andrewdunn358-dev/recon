@@ -1,0 +1,62 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Recon{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d1117; --surface:#161b22; --surface-2:#1b2330; --line:#263041;
+    --text:#e8eef6; --dim:#8a97a9; --faint:#5b6675;
+    --p1:#ff5470; --p2:#ffa14a; --p3:#54b9ff; --review:#a98bff; --ok:#3ad7c5;
+    --display:'Space Grotesk',system-ui,sans-serif;
+    --body:'Inter',system-ui,-apple-system,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(58,215,197,.06), transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--body);
+    -webkit-font-smoothing:antialiased; line-height:1.5; min-height:100vh;
+  }
+  a{color:inherit}
+  ::selection{background:rgba(84,185,255,.3)}
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 28px; border-bottom:1px solid var(--line);
+    position:sticky; top:0; backdrop-filter:blur(8px);
+    background:rgba(13,17,23,.7); z-index:10;
+  }
+  .brand{display:flex; align-items:baseline; gap:14px}
+  .mark{
+    font-family:var(--display); font-weight:700; font-size:22px;
+    letter-spacing:.18em; color:var(--text);
+  }
+  .mark b{color:var(--ok); font-weight:700}
+  .brand-sub{font-size:12px; color:var(--faint); letter-spacing:.04em}
+  .session{display:flex; align-items:center; gap:16px; font-size:13px}
+  .session .user{color:var(--dim); font-family:var(--mono)}
+  .signout{
+    color:var(--dim); text-decoration:none; border:1px solid var(--line);
+    padding:6px 12px; border-radius:7px; transition:.15s;
+  }
+  .signout:hover{color:var(--text); border-color:var(--p1)}
+
+  .wrap{max-width:1120px; margin:0 auto; padding:36px 28px 80px}
+
+  :focus-visible{outline:2px solid var(--ok); outline-offset:2px; border-radius:4px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important; animation:none!important}}
+  {% block style %}{% endblock %}
+</style>
+</head>
+<body>
+{% block body %}{% endblock %}
+</body>
+</html>

@@ -10,6 +10,28 @@ Everything else in the brief (Greenbone, DefectDojo, on-site collectors,
 multi-tenant dashboards, AI triage) is deliberately deferred. This is the
 smallest thing that proves the core IP works.
 
+## Deploy: native LXC (recommended) or Docker
+
+Two supported deployment paths. On Proxmox, **native is recommended** — an LXC
+is already a container, so running the services directly inside it (Postgres,
+Redis, gunicorn, Celery, Nuclei) avoids all the Docker-in-LXC nesting/overlayfs/
+sysctl/AppArmor friction and lets you stay on a clean **unprivileged** CT.
+
+**Native LXC (no Docker)** — fresh Debian 12 LXC, run as root:
+
+```bash
+git clone https://github.com/andrewdunn358-dev/recon.git /opt/recon
+bash /opt/recon/deploy/bootstrap-lxc.sh
+```
+
+Installs Postgres + Redis + the app, wires three systemd services
+(`recon-web`, `recon-worker`, `recon-beat`), runs migrations, and starts
+everything. Then `createsuperuser` and you're at `http://<box-ip>:8000/`.
+Service control is plain systemd: `systemctl status recon-web recon-worker recon-beat`.
+
+**Docker (on a VM)** — see `deploy/bootstrap-debian.sh` and `docker-compose.yml`
+below. Fine on a VM; avoid in an LXC.
+
 ---
 
 ## What's in here
