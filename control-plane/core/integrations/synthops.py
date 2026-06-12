@@ -103,8 +103,9 @@ class SynthOps:
         return _as_list(self._get("/workstations", {"client_id": client_id} if client_id else None))
 
     def agent_software(self, agent_id):
-        """Installed software for a device's TRMM agent (TRMM-native rows)."""
+        """Installed software for a device's TRMM agent (TRMM-native rows).
+        Best-effort: a failing/offline agent returns [] rather than aborting a sync."""
         try:
             return _as_list(self._get(f"/integrations/trmm/agent/{agent_id}/software"))
-        except requests.RequestError:
+        except Exception:
             return []

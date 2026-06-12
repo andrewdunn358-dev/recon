@@ -644,36 +644,56 @@ def sync_synthops():
         by_client[c.get("id")] = tenant
         new_tenants += int(created)
 
-    # servers + workstations -> assets.
-    n_assets = n_products = 0
-    devices = [d for d in so.servers()] + [d for d in so.workstations()]
-    for d in devices:
-        tenant = by_client.get(d.get("client_id"))
-        if tenant is None:
-            cname = (d.get("client_name") or "Unknown").strip()
-            tenant, _ = Tenant.objects.get_or_create(
-                slug=slugify(cname)[:50] or "unknown", defaults={"name": cname})
+    # servers + workstations -> assets. Tag the source so we can report counts,
+    # and isolate each device so one failure can't abort the whole sync.
+    try:
+        server_list = so.servers()
+    except Exception as e:
+        server_list = []
+        print(f"sync_synthops: /servers fetch failed: {e}")
+    try:
+        ws_list = so.workstations()
+    except Exception as e:
+        ws_list = []
+        print(f"sync_synthops: /workstations fetch failed: {e}")
 
-        host = d.get("hostname") or str(d.get("id"))
-        public_ip = (d.get("public_ip") or "").strip()
-        target = public_ip or (d.get("ip_address") or "").strip() or host
-        asset, _ = Asset.objects.update_or_create(
-            tenant=tenant, name=host,
-            defaults={"kind": Asset.Kind.HOST, "target": target,
-                      "internet_facing": bool(public_ip), "last_seen": timezone.now()})
-        n_assets += 1
+    n_servers = n_ws = n_products = errors = 0
+    for kind_label, d in ([("server", s) for s in server_list]
+                          + [("workstation", w) for w in ws_list]):
+        try:
+            tenant = by_client.get(d.get("client_id"))
+            if tenant is None:
+                cname = (d.get("client_name") or "Unknown").strip()
+                tenant, _ = Tenant.objects.get_or_create(
+                    slug=slugify(cname)[:50] or "unknown", defaults={"name": cname})
 
-        # Software -> products. Replace SynthOps-sourced rows; leave scan/manual.
-        agent_id = d.get("tactical_rmm_agent_id")
-        if agent_id:
-            asset.products.filter(source="synthops").delete()
-            for sw in so.agent_software(agent_id):
-                row = trmm.normalise_software(sw)
-                if not row["name"]:
-                    continue
-                Product.objects.create(asset=asset, source="synthops", **row)
-                n_products += 1
+            host = d.get("hostname") or str(d.get("id"))
+            public_ip = (d.get("public_ip") or "").strip()
+            target = public_ip or (d.get("ip_address") or "").strip() or host
+            asset, _ = Asset.objects.update_or_create(
+                tenant=tenant, name=host,
+                defaults={"kind": Asset.Kind.HOST, "target": target,
+                          "internet_facing": bool(public_ip), "last_seen": timezone.now()})
+            if kind_label == "server":
+                n_servers += 1
+            else:
+                n_ws += 1
+
+            # Software -> products. Replace SynthOps-sourced rows; leave scan/manual.
+            agent_id = d.get("tactical_rmm_agent_id")
+            if agent_id:
+                asset.products.filter(source="synthops").delete()
+                for sw in so.agent_software(agent_id):
+                    row = trmm.normalise_software(sw)
+                    if not row["name"]:
+                        continue
+                    Product.objects.create(asset=asset, source="synthops", **row)
+                    n_products += 1
+        except Exception as e:  # one bad device must not lose the rest
+            errors += 1
+            print(f"sync_synthops: skipped {d.get('hostname')}: {e}")
 
     watch_loop()
-    return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new tenants), "
-            f"{n_assets} assets, {n_products} products")
+    return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new), "
+            f"{n_servers} servers, {n_ws} workstations, {n_products} products, "
+            f"{errors} skipped")
