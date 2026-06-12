@@ -6,3 +6,4 @@ gunicorn>=21.2
 requests>=2.31
 python-dotenv>=1.0
 whitenoise>=6.6
+djangorestframework>=3.15
