@@ -41,11 +41,13 @@ class SynthOpsError(RuntimeError):
 
 
 def _as_list(payload):
-    """SynthOps list endpoints return bare arrays; tolerate a wrapped shape too."""
+    """SynthOps list endpoints return bare arrays; the per-agent software endpoint
+    wraps it as {"id":.., "software":[...]}. Tolerate both."""
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("items", "results", "data", "clients", "servers", "workstations"):
+        for key in ("software", "items", "results", "data",
+                    "clients", "servers", "workstations"):
             if isinstance(payload.get(key), list):
                 return payload[key]
     return []
