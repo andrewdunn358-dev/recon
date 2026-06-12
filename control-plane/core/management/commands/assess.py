@@ -29,6 +29,9 @@ class Command(BaseCommand):
                                  "(default: a holding 'Ad-hoc' tenant).")
         parser.add_argument("--ports", action="store_true",
                             help="Also run a naabu port sweep.")
+        parser.add_argument("--nuclei", action="store_true",
+                            help="Also run a deep Nuclei scan of this target "
+                                 "(finds CVEs/misconfigs httpx's fingerprint misses).")
         parser.add_argument("--authorised", action="store_true",
                             help="Skip the interactive authorisation prompt (§11).")
 
@@ -78,6 +81,25 @@ class Command(BaseCommand):
         result = external_discovery(tenant.id, roots=[target], do_ports=opts["ports"])
         style = self.style.ERROR if ("ABORTED" in result or "not found" in result) else self.style.SUCCESS
         self.stdout.write(style(result))
+
+        # Optional deep pass: Nuclei against just this target's hosts.
+        if opts["nuclei"]:
+            from core.tasks import nuclei_scan
+            from core.models import Finding
+            scan_targets = [a.target for a in
+                            tenant.assets.filter(target__icontains=target.split("/")[0])
+                            if a.target] or [target]
+            self.stdout.write("Running Nuclei (deep pass — this can take a while)...")
+            self.stdout.write(self.style.SUCCESS(
+                nuclei_scan(tenant.id, only_targets=scan_targets)))
+            hits = Finding.objects.filter(
+                tenant=tenant, source="nuclei",
+                asset__target__icontains=target.split("/")[0]).select_related("asset")
+            if hits:
+                self.stdout.write("\nNuclei findings:")
+                for f in hits.order_by("priority"):
+                    self.stdout.write(
+                        f"  {f.priority}  [{f.severity:<8}] {f.title}  ({f.matched_at})")
 
         # Show the surface for just this run's hosts.
         live = tenant.assets.filter(internet_facing=True).order_by("target")

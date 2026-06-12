@@ -191,11 +191,14 @@ SEVERITY_TO_PRIORITY = {
 
 
 @shared_task
-def nuclei_scan(tenant_id: int):
+def nuclei_scan(tenant_id: int, only_targets=None):
     """
     Active external scan with Nuclei against a tenant's authorised assets.
     Phase 0 = external only. Hard-gated on tenant.scanning_authorised (§11).
     Each result becomes a Finding (source="nuclei"), mapped back to its asset.
+
+    only_targets: if given, scan just those targets (used by ad-hoc assess so a
+    single-target run doesn't sweep the whole tenant's assets).
     """
     from .models import Tenant, Asset, CVE, Finding
 
@@ -205,6 +208,9 @@ def nuclei_scan(tenant_id: int):
 
     # target -> asset, so we can attribute each hit back to the right asset.
     by_target = {a.target: a for a in tenant.assets.exclude(target="") if a.target}
+    if only_targets:
+        wanted = set(only_targets)
+        by_target = {t: a for t, a in by_target.items() if t in wanted}
     targets = list(by_target)
     if not targets:
         return "nuclei_scan: no scannable targets (set the asset 'target' field)"
@@ -351,7 +357,7 @@ def external_discovery(tenant_id: int, roots=None, do_ports: bool = False):
             techs.append(r["webserver"])
         for tech in techs:
             info = discovery.split_tech(tech)
-            if not info["name"]:
+            if not info["name"] or not discovery.is_product_tech(info["name"]):
                 continue
             _, made = Product.objects.get_or_create(
                 asset=asset, name=info["name"], version=info["version"],

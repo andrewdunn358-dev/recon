@@ -127,6 +127,19 @@ VENDOR_HINTS = {
 }
 
 
+# httpx 'tech' lumps real software in with response headers and protocols. These
+# aren't products and carry no CVEs, so we keep them out of the Product table.
+NON_PRODUCT_TECH = {
+    "hsts", "http/2", "http/3", "http/1.1", "http/1.0", "ipv6", "ipv4",
+    "strict-transport-security", "content-security-policy", "csp", "cookies",
+    "default", "common", "via",
+}
+
+
+def is_product_tech(name: str) -> bool:
+    return name.strip().lower() not in NON_PRODUCT_TECH
+
+
 def split_tech(tech: str) -> dict:
     """
     Turn an httpx tech/webserver string into vendor/name/version. Tech-detect
