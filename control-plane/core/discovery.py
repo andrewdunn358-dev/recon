@@ -11,7 +11,17 @@ without the binaries present.
 """
 from __future__ import annotations
 
+import ipaddress
 import json
+
+
+def looks_like_ip(s: str) -> bool:
+    """True for a bare IPv4/IPv6 (optionally with /CIDR)."""
+    try:
+        ipaddress.ip_address(s.split("/")[0].strip())
+        return True
+    except ValueError:
+        return False
 
 
 def _lines(stdout: str):

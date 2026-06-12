@@ -297,9 +297,12 @@ def external_discovery(tenant_id: int, roots=None, do_ports: bool = False):
         return (f"external_discovery: no root domains for {tenant.slug} — add a "
                 f"domain asset or pass roots=[...]")
 
-    # 1) subdomains (passive). Seed with the roots themselves.
+    # 1) subdomains (passive). Seed with the roots themselves. IPs can't be
+    #    enumerated, so they go straight through to the httpx probe.
     hosts = set(roots)
     for root in roots:
+        if discovery.looks_like_ip(root):
+            continue
         try:
             p = subprocess.run(["subfinder", "-silent", "-d", root],
                                capture_output=True, text=True, timeout=600)
