@@ -877,8 +877,8 @@ def remediate_via_trmm(action_id: int):
             act.status = RemediationAction.Status.BLOCKED
             act.output = "No TRMM agent id on this device."
         else:
-            res = trmm.run_script(act.agent_id,
-                                  args=[act.target_ref] if act.target_ref else [])
+            pkg = trmm.winget_query(act.target_ref)
+            res = trmm.run_script(act.agent_id, args=[pkg] if pkg else [])
             act.output = str(res.get("result"))[:5000]
             act.status = RemediationAction.Status.DONE
     except Exception as e:  # noqa: BLE001

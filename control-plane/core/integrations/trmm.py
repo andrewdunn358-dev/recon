@@ -15,6 +15,23 @@ Config via env (injected from .env by compose):
 from __future__ import annotations
 
 import os
+import re
+
+
+def winget_query(name: str) -> str:
+    """Turn a Windows inventory display name into something safe to drop onto an
+    (unquoted) command line and plausible for `winget upgrade --name`.
+
+    Strips the arch/edition parenthetical TRMM-side inventory carries
+    ("Notepad++ (64-bit)" -> "Notepad++"), drops a trailing version run, and
+    removes parentheses entirely — an unquoted '(' is a PowerShell metacharacter
+    and was causing the runscript command to fail to parse.
+    """
+    s = name or ""
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", s)          # trailing "(64-bit)" etc.
+    s = re.sub(r"\s+v?\d+(?:\.\d+)+.*$", "", s)      # trailing version run
+    s = s.replace("(", " ").replace(")", " ")        # any stray parens
+    return " ".join(s.split()).strip()
 
 
 class TRMMError(Exception):
