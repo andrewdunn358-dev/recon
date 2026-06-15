@@ -145,7 +145,7 @@ def watch_loop():
                     "tenant": asset.tenant,
                     "priority": priority,
                     "match_confidence": m.confidence,
-                    "match_reason": m.reason,
+                    "match_reason": (m.reason or "")[:300],
                     "last_seen": timezone.now(),
                 },
             )
@@ -583,7 +583,7 @@ def adhoc_assess(job_id: int):
                     asset=product.asset, cve=cve, product=product,
                     defaults={"tenant": tenant,
                               "priority": prioritise(cve, product.asset, m.confidence),
-                              "match_confidence": m.confidence, "match_reason": m.reason,
+                              "match_confidence": m.confidence, "match_reason": (m.reason or "")[:300],
                               "last_seen": timezone.now(), "scan_job": job})
                 cve_matches += 1
                 upd(phase=f"Matched {cve_matches} CVE(s) so far…")
@@ -669,7 +669,7 @@ def assess_client(job_id: int):
                         asset=asset, cve=cve, product=product,
                         defaults={"tenant": tenant,
                                   "priority": prioritise(cve, asset, m.confidence),
-                                  "match_confidence": m.confidence, "match_reason": m.reason,
+                                  "match_confidence": m.confidence, "match_reason": (m.reason or "")[:300],
                                   "last_seen": timezone.now(), "scan_job": job})
                     cve_matches += 1
             if i % 5 == 0 or i == len(assets):
@@ -760,7 +760,7 @@ def assess_asset(job_id: int, asset_id: int):
                         asset=asset, cve=cve, product=product,
                         defaults={"tenant": tenant,
                                   "priority": prioritise(cve, asset, m.confidence),
-                                  "match_confidence": m.confidence, "match_reason": m.reason,
+                                  "match_confidence": m.confidence, "match_reason": (m.reason or "")[:300],
                                   "last_seen": timezone.now(), "scan_job": job})
                     cve_matches += 1
             if i % 20 == 0 or i == len(products):
