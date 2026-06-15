@@ -88,7 +88,14 @@ def run_script(agent_id: str, args=None, timeout: int = 120) -> dict:
         headers={"Content-Type": "application/json", "X-API-KEY": key},
         json=body, timeout=timeout + 30,
     )
-    r.raise_for_status()
+    if not r.ok:
+        detail = (r.text or "").strip()
+        # TRMM with DEBUG off returns a generic HTML 500 page with no detail; in
+        # that case the real traceback is only in TRMM's own backend logs.
+        snippet = detail[:600] if detail else "(empty response body)"
+        raise TRMMError(
+            f"TRMM returned HTTP {r.status_code} for runscript on agent "
+            f"{agent_id} (script id {script_id}). Response: {snippet}")
     try:
         return {"ok": True, "result": r.json()}
     except ValueError:
