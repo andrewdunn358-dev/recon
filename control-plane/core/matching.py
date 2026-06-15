@@ -164,20 +164,46 @@ def match_product_to_cve(product, cve) -> Match | None:
 
         # 2) version-range path -> medium
         versions = aff.get("versions") or []
-        verdicts = [version_in_range(product.version, vr) for vr in versions]
-        if any(v is True for v in verdicts) and vendor_ok:
+        matched_range = None
+        for vr in versions:
+            if version_in_range(product.version, vr) is True:
+                matched_range = vr
+                break
+        if matched_range is not None and vendor_ok:
+            who = (aff.get("product") or "this software").strip()
             return Match(
                 "medium",
-                f"vendor+product token match, version {product.version} in affected range",
+                f"This device runs {who} {product.version}, which is in the "
+                f"affected range ({_describe_range(matched_range)}) for this CVE.",
             )
 
         # 3) product matched but version inconclusive/absent -> low (review)
         # Keep as a candidate; don't return yet in case a better aff entry exists.
         if vendor_ok:
+            who = (aff.get("product") or "this software").strip()
             cand = Match(
                 "low",
-                f"product '{aff.get('product','')}' matched; version unverified — review",
+                f"This device runs {who}, which this CVE affects, but the version "
+                f"couldn't be confirmed against the affected range — needs review.",
             )
             best = best or cand
 
     return best
+
+
+def _describe_range(vr: dict) -> str:
+    """Human phrasing of a cvelistV5 version-range object."""
+    base = (vr.get("version") or "").strip()
+    lt = (vr.get("lessThan") or "").strip()
+    lte = (vr.get("lessThanOrEqual") or "").strip()
+    if lt and base and base not in ("0", "*"):
+        return f"{base} up to but not including {lt}"
+    if lt:
+        return f"before {lt}"
+    if lte and base and base not in ("0", "*"):
+        return f"{base} up to and including {lte}"
+    if lte:
+        return f"up to and including {lte}"
+    if base and base not in ("0", "*"):
+        return f"version {base}"
+    return "all versions"

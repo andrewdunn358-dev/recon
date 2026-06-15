@@ -10,16 +10,33 @@
     border:1px solid var(--line); border-radius:20px; padding:5px 13px; transition:.12s}
   .chip:hover{color:var(--text)} .chip.on{color:var(--bg); background:var(--text); border-color:var(--text)}
   .chip .c{opacity:.6; margin-left:5px}
-  .fcard{display:flex; align-items:center; gap:13px; padding:11px 15px; font-size:13px;
-    border:1px solid var(--line); border-left:3px solid var(--c,var(--faint));
-    border-radius:7px; margin-bottom:7px}
+  .fcard{border:1px solid var(--line); border-left:3px solid var(--c,var(--faint));
+    border-radius:7px; margin-bottom:7px; overflow:hidden}
+  .fcard > summary{display:flex; align-items:center; gap:13px; padding:11px 15px;
+    font-size:13px; cursor:pointer; list-style:none}
+  .fcard > summary::-webkit-details-marker{display:none}
+  .fcard > summary::before{content:'▸'; color:var(--faint); font-size:10px; flex:none}
+  .fcard[open] > summary::before{content:'▾'}
   .sev{font-family:var(--mono); font-weight:700; min-width:64px; font-size:12px}
   .fl{font-family:var(--mono)} .fk{color:var(--p1); font-size:10px; font-weight:700;
     border:1px solid var(--p1); border-radius:4px; padding:1px 5px}
-  .fa{color:var(--faint); font-size:11.5px}
+  .ftitle{color:var(--text); font-size:12.5px; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; max-width:38%}
+  .fa{color:var(--faint); font-size:11.5px; margin-left:auto; flex:none}
   .fa a{color:var(--faint); text-decoration:none} .fa a:hover{color:var(--text)}
-  .fr{color:var(--dim); font-size:11.5px; margin-left:auto; max-width:40%;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .detail{padding:4px 16px 15px 30px; border-top:1px solid var(--line); font-size:13px}
+  .detail .what{color:var(--text); margin:12px 0 14px; line-height:1.5}
+  .detail .seclabel{font-size:10px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--faint); margin:0 0 5px}
+  .signals{display:flex; flex-wrap:wrap; gap:8px; margin:0 0 14px}
+  .sig{font-family:var(--mono); font-size:11px; border:1px solid var(--line);
+    border-radius:6px; padding:4px 9px; color:var(--dim)}
+  .sig.kev{color:var(--p1); border-color:var(--p1)} .sig.epss{color:var(--p2)}
+  .why{color:var(--dim); line-height:1.5; margin:0 0 14px}
+  .why b{color:var(--text)}
+  .links{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+  .links a{font-size:11.5px; color:var(--p3); text-decoration:none; border:1px solid var(--line);
+    border-radius:6px; padding:4px 10px} .links a:hover{border-color:var(--p3)}
   .remed{background:none; border:1px solid var(--ok); color:var(--ok); font-size:11px;
     border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; transition:.12s}
   .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
@@ -44,16 +61,43 @@
   </div>
 
   {% for f in page_obj %}
-  <div class="fcard" style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
-    <span class="sev" style="color:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">{{ f.severity_word }}</span>
-    <span class="fl">{{ f.label }}</span>
-    {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
-    <span class="fa">{% if not tenant %}<a href="{% url 'client_detail' f.tenant.slug %}">{{ f.tenant.name }}</a> · {% endif %}{{ f.asset.name }}</span>
-    <span class="fr">{{ f.match_reason|default:f.title }}</span>
-    {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
-    <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
-    {% endif %}
-  </div>
+  <details class="fcard" style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
+    <summary>
+      <span class="sev" style="color:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">{{ f.severity_word }}</span>
+      <span class="fl">{{ f.label }}</span>
+      {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
+      <span class="ftitle">{{ f.cve.title|default:f.title }}</span>
+      <span class="fa">{% if not tenant %}<a href="{% url 'client_detail' f.tenant.slug %}">{{ f.tenant.name }}</a> · {% endif %}{{ f.asset.name }}</span>
+    </summary>
+    <div class="detail">
+      <p class="seclabel">What it is</p>
+      <p class="what">{{ f.cve.summary|default:f.cve.title|default:f.title|default:"No description available for this finding." }}</p>
+
+      <p class="seclabel">Why it's prioritised</p>
+      <div class="signals">
+        {% if f.cve.in_kev %}<span class="sig kev">Actively exploited — on CISA's Known Exploited list</span>{% endif %}
+        {% if f.cve.epss != None %}<span class="sig epss">EPSS {{ f.cve.epss|floatformat:2 }} — ~{% widthratio f.cve.epss 1 100 %}% chance of exploitation in 30 days</span>{% endif %}
+        {% if f.cve.cvss %}<span class="sig">CVSS {{ f.cve.cvss }} base score</span>{% endif %}
+        {% if f.asset.internet_facing %}<span class="sig">Internet-facing asset</span>{% endif %}
+        <span class="sig">{{ f.match_confidence|default:"—" }} confidence match</span>
+      </div>
+
+      <p class="seclabel">Why it's on {{ f.asset.name }}</p>
+      <p class="why">{{ f.match_reason|default:f.title }}</p>
+
+      {% if f.remediation_links %}
+      <p class="seclabel">How to fix</p>
+      <div class="links">
+        {% for l in f.remediation_links %}<a href="{{ l.url }}" target="_blank" rel="noopener">{{ l.label }} ↗</a>{% endfor %}
+        {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
+        <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
+        {% endif %}
+      </div>
+      {% elif remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
+      <div class="links"><button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span></div>
+      {% endif %}
+    </div>
+  </details>
   {% empty %}
   <p class="empty">No findings match this filter.</p>
   {% endfor %}
