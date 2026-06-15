@@ -122,33 +122,47 @@ def watch_loop():
     whose affected products share a token with the product name, not all 250k.
     """
     from types import SimpleNamespace
+    from collections import defaultdict
     from .models import Product, CVE, Finding, CveProductToken
     from .matching import candidate_tokens
 
     # Phase 1 — match each UNIQUE piece of software once (the expensive part).
-    # 27k installed products collapse to a few thousand distinct (name,version)s.
+    # 27k installed products collapse to a few thousand distinct (name,version)s,
+    # and those in turn share far fewer name-signatures: the candidate CVEs depend
+    # only on the product NAME, so fetch the corpus slice once per signature and
+    # reuse it across every version of that app (Chrome 120/121/122 → one fetch).
     uniques = list(Product.objects.values_list("name", "version", "vendor", "cpe").distinct())
-    print(f"watch_loop: {len(uniques)} unique software items to match "
-          f"against the corpus…", flush=True)
     cache: dict = {}
     needed: set = set()
-    for j, key in enumerate(uniques, 1):
-        name, version, vendor, cpe = key
-        matches = []
-        ptoks = candidate_tokens(name)
-        if ptoks:
-            cand_ids = list(CveProductToken.objects.filter(token__in=ptoks)
-                            .values_list("cve_id", flat=True).distinct())
-            if cand_ids:
-                pseudo = SimpleNamespace(name=name, version=version, vendor=vendor, cpe=cpe)
-                for cve in CVE.objects.filter(cve_id__in=cand_ids):
-                    m = match_product_to_cve(pseudo, cve)
-                    if m:
-                        matches.append((cve.cve_id, m.confidence, m.reason))
-                        needed.add(cve.cve_id)
-        cache[key] = matches
-        if j % 25 == 0 or j == len(uniques):
-            print(f"watch_loop: matched {j}/{len(uniques)} unique items…", flush=True)
+
+    groups: dict = defaultdict(list)
+    for key in uniques:
+        toks = frozenset(candidate_tokens(key[0]))
+        if toks:
+            groups[toks].append(key)
+        else:
+            cache[key] = []
+    print(f"watch_loop: {len(uniques)} unique software items across "
+          f"{len(groups)} name-signatures to match against the corpus…", flush=True)
+
+    done = 0
+    for toks, keys in groups.items():
+        cand_ids = list(CveProductToken.objects.filter(token__in=toks)
+                        .values_list("cve_id", flat=True).distinct())
+        cands = list(CVE.objects.filter(cve_id__in=cand_ids)) if cand_ids else []
+        for key in keys:
+            name, version, vendor, cpe = key
+            pseudo = SimpleNamespace(name=name, version=version, vendor=vendor, cpe=cpe)
+            matches = []
+            for cve in cands:
+                m = match_product_to_cve(pseudo, cve)
+                if m:
+                    matches.append((cve.cve_id, m.confidence, m.reason))
+                    needed.add(cve.cve_id)
+            cache[key] = matches
+            done += 1
+            if done % 50 == 0 or done == len(uniques):
+                print(f"watch_loop: matched {done}/{len(uniques)} unique items…", flush=True)
 
     # Phase 2 — write findings per device from the cache (writes only, fast).
     cve_by_id = {c.cve_id: c for c in CVE.objects.filter(cve_id__in=needed)}
@@ -852,7 +866,7 @@ def remediate_via_trmm(action_id: int):
 
 
 @shared_task
-def sync_synthops(reset=False):
+def sync_synthops(reset=False, match="inline"):
     """
     Read Recon's inventory from SynthOps (the source of truth) and retire the
     direct TRMM pull: clients -> tenants, servers/workstations -> assets, and
@@ -1015,7 +1029,14 @@ def sync_synthops(reset=False):
         # drop software that's no longer installed
         asset.products.filter(source="synthops").exclude(name__in=incoming).delete()
 
-    watch_loop()
+    if match == "async":
+        watch_loop.delay()
+        tail = " — matching queued to the worker (watch: docker compose logs -f worker)"
+    elif match == "skip":
+        tail = " — matching skipped"
+    else:
+        watch_loop()
+        tail = ""
     return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new), "
             f"{n_servers} servers, {n_ws} workstations, {n_products} products, "
-            f"{errors} skipped")
+            f"{errors} skipped{tail}")
