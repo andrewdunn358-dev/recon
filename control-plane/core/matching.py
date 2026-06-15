@@ -41,6 +41,30 @@ def tokens(s: str) -> set[str]:
     return set(normalise(s).split())
 
 
+# Generic vendor / filler words that must NOT, on their own, constitute a
+# product match. Without this, "Microsoft Edge" matches "Microsoft SharePoint"
+# CVEs because they share "microsoft". Product-identifying tokens (office, edge,
+# sharepoint, acrobat, chrome, tomcat…) are deliberately NOT here.
+STOPWORDS = {
+    "microsoft", "apple", "google", "adobe", "oracle", "apache", "mozilla",
+    "ibm", "cisco", "intel", "amd", "nvidia", "vmware", "citrix", "sap",
+    "symantec", "mcafee", "dell", "lenovo", "hp", "hewlett", "packard",
+    "corporation", "corp", "inc", "incorporated", "ltd", "limited", "llc",
+    "gmbh", "co", "company", "software", "systems", "technologies",
+    "technology", "solutions", "group", "the", "for", "and", "of",
+    "version", "update", "updates", "edition", "professional", "enterprise",
+    "standard", "server", "client", "tools", "runtime", "redistributable",
+    "win", "win32", "win64",
+}
+
+
+def candidate_tokens(s: str) -> set[str]:
+    """Distinctive, indexable tokens for a name: drop stopwords, pure-numbers,
+    and 1-char tokens. Used for CVE candidate selection and the match gate."""
+    return {t for t in tokens(s)
+            if len(t) > 1 and not t.isdigit() and t not in STOPWORDS}
+
+
 def affected_product_tokens(affected) -> set[str]:
     """
     Every distinct normalised product token across a CVE's affected[] entries.
@@ -167,8 +191,9 @@ def match_product_to_cve(product, cve) -> Match | None:
         a_vendor_t = tokens(aff.get("vendor", ""))
         a_product_t = tokens(aff.get("product", ""))
 
-        # Product name must overlap to be worth considering at all.
-        if not (p_name_t & a_product_t):
+        # The product names must share a DISTINCTIVE token (not just a vendor word
+        # like "microsoft"), or it isn't really the same product.
+        if not (candidate_tokens(product.name) & candidate_tokens(aff.get("product", ""))):
             continue
 
         vendor_ok = bool(p_vendor_t & a_vendor_t) or not (p_vendor_t and a_vendor_t)

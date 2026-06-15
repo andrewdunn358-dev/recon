@@ -122,13 +122,13 @@ def watch_loop():
     whose affected products share a token with the product name, not all 250k.
     """
     from .models import Product, CVE, Finding, CveProductToken
-    from .matching import tokens as name_tokens
+    from .matching import candidate_tokens
 
     raised, refreshed = 0, 0
 
     for product in Product.objects.select_related("asset", "asset__tenant"):
         asset = product.asset
-        ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+        ptoks = candidate_tokens(product.name)
         if not ptoks:
             continue
         cand_ids = (CveProductToken.objects
@@ -510,7 +510,7 @@ def adhoc_assess(job_id: int):
     with the job so the panel can stream this run's results live.
     """
     from .models import ScanJob, Tenant, Asset
-    from .matching import tokens as name_tokens, match_product_to_cve
+    from .matching import candidate_tokens, match_product_to_cve
     from .models import Product, CVE, Finding, CveProductToken
     from . import discovery
 
@@ -570,7 +570,7 @@ def adhoc_assess(job_id: int):
         prods = Product.objects.filter(
             asset__tenant=tenant, asset__target__icontains=base).select_related("asset")
         for product in prods:
-            ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+            ptoks = candidate_tokens(product.name)
             if not ptoks:
                 continue
             cand = (CveProductToken.objects.filter(token__in=ptoks)
@@ -634,7 +634,7 @@ def assess_client(job_id: int):
          listed so they can be revisited when they come back up.
     """
     from .models import ScanJob, Asset, Product, CVE, Finding, CveProductToken
-    from .matching import tokens as name_tokens, match_product_to_cve
+    from .matching import candidate_tokens, match_product_to_cve
 
     job = ScanJob.objects.get(pk=job_id)
 
@@ -656,7 +656,7 @@ def assess_client(job_id: int):
         cve_matches = 0
         for i, asset in enumerate(assets, 1):
             for product in asset.products.all():
-                ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+                ptoks = candidate_tokens(product.name)
                 if not ptoks:
                     continue
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
@@ -729,7 +729,7 @@ def assess_asset(job_id: int, asset_id: int):
     runs an active Nuclei scan of its target.
     """
     from .models import ScanJob, Asset, CVE, Finding, CveProductToken
-    from .matching import tokens as name_tokens, match_product_to_cve
+    from .matching import candidate_tokens, match_product_to_cve
 
     job = ScanJob.objects.get(pk=job_id)
 
@@ -748,7 +748,7 @@ def assess_asset(job_id: int, asset_id: int):
 
         cve_matches = 0
         for i, product in enumerate(products, 1):
-            ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+            ptoks = candidate_tokens(product.name)
             if ptoks:
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
                         .values_list("cve_id", flat=True).distinct())
