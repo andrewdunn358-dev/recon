@@ -125,34 +125,39 @@ def watch_loop():
     from .matching import candidate_tokens
 
     raised, refreshed = 0, 0
+    qs = Product.objects.select_related("asset", "asset__tenant")
+    total = qs.count()
+    print(f"watch_loop: matching {total} products against the CVE corpus "
+          f"(this is the slow part)…")
 
-    for product in Product.objects.select_related("asset", "asset__tenant"):
+    for i, product in enumerate(qs.iterator(chunk_size=500), 1):
         asset = product.asset
         ptoks = candidate_tokens(product.name)
-        if not ptoks:
-            continue
-        cand_ids = (CveProductToken.objects
-                    .filter(token__in=ptoks)
-                    .values_list("cve_id", flat=True).distinct())
-        for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
-            m = match_product_to_cve(product, cve)
-            if not m:
-                continue
-            priority = prioritise(cve, asset, m.confidence)
-            finding, created = Finding.objects.update_or_create(
-                asset=asset, cve=cve, product=product,
-                defaults={
-                    "tenant": asset.tenant,
-                    "priority": priority,
-                    "match_confidence": m.confidence,
-                    "match_reason": (m.reason or "")[:300],
-                    "last_seen": timezone.now(),
-                },
-            )
-            if created:
-                raised += 1
-            else:
-                refreshed += 1
+        if ptoks:
+            cand_ids = (CveProductToken.objects
+                        .filter(token__in=ptoks)
+                        .values_list("cve_id", flat=True).distinct())
+            for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
+                m = match_product_to_cve(product, cve)
+                if not m:
+                    continue
+                priority = prioritise(cve, asset, m.confidence)
+                finding, created = Finding.objects.update_or_create(
+                    asset=asset, cve=cve, product=product,
+                    defaults={
+                        "tenant": asset.tenant,
+                        "priority": priority,
+                        "match_confidence": m.confidence,
+                        "match_reason": (m.reason or "")[:300],
+                        "last_seen": timezone.now(),
+                    },
+                )
+                if created:
+                    raised += 1
+                else:
+                    refreshed += 1
+        if i % 1000 == 0 or i == total:
+            print(f"watch_loop: {i}/{total} products — {raised} raised, {refreshed} refreshed…")
 
     notify_new_findings.delay()
     return f"watch_loop: {raised} new, {refreshed} refreshed"
