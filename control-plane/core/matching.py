@@ -201,10 +201,14 @@ def match_product_to_cve(product, cve) -> Match | None:
         # 2) version-range path -> medium
         versions = aff.get("versions") or []
         matched_range = None
+        any_inconclusive = False
         for vr in versions:
-            if version_in_range(product.version, vr) is True:
+            r = version_in_range(product.version, vr)
+            if r is True:
                 matched_range = vr
                 break
+            if r is None:
+                any_inconclusive = True
         if matched_range is not None and vendor_ok:
             who = (aff.get("product") or "this software").strip()
             return Match(
@@ -213,8 +217,13 @@ def match_product_to_cve(product, cve) -> Match | None:
                 f"affected range ({_describe_range(matched_range)}) for this CVE.",
             )
 
-        # 3) product matched but version inconclusive/absent -> low (review)
-        # Keep as a candidate; don't return yet in case a better aff entry exists.
+        # 3) product matched but no range confirmed it.
+        # If the CVE listed versions and every one was conclusively OUT of range
+        # (nothing inconclusive), this device is patched — not a finding.
+        if versions and not any_inconclusive:
+            continue
+        # Otherwise the version was genuinely inconclusive (unparseable/date-like)
+        # or the CVE gave no version info -> low (review).
         if vendor_ok:
             who = (aff.get("product") or "this software").strip()
             cand = Match(

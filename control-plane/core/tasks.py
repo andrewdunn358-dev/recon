@@ -121,43 +121,52 @@ def watch_loop():
     scales to the full corpus: we only run the fine-grained matcher against CVEs
     whose affected products share a token with the product name, not all 250k.
     """
+    from types import SimpleNamespace
     from .models import Product, CVE, Finding, CveProductToken
     from .matching import candidate_tokens
 
-    raised, refreshed = 0, 0
-    qs = Product.objects.select_related("asset", "asset__tenant")
-    total = qs.count()
-    print(f"watch_loop: matching {total} products against the CVE corpus "
-          f"(this is the slow part)…", flush=True)
-
-    # The expensive work (candidate lookup + version compare) depends only on the
-    # software identity, not the device — so compute it once per unique
-    # (name, version, vendor, cpe) and reuse across every device that runs it.
-    match_cache: dict = {}
-
-    for i, product in enumerate(qs.iterator(chunk_size=500), 1):
-        asset = product.asset
-        key = (product.name, product.version, product.vendor, product.cpe)
-        results = match_cache.get(key)
-        if results is None:
-            results = []
-            ptoks = candidate_tokens(product.name)
-            if ptoks:
-                cand_ids = (CveProductToken.objects
-                            .filter(token__in=ptoks)
+    # Phase 1 — match each UNIQUE piece of software once (the expensive part).
+    # 27k installed products collapse to a few thousand distinct (name,version)s.
+    uniques = list(Product.objects.values_list("name", "version", "vendor", "cpe").distinct())
+    print(f"watch_loop: {len(uniques)} unique software items to match "
+          f"against the corpus…", flush=True)
+    cache: dict = {}
+    needed: set = set()
+    for j, key in enumerate(uniques, 1):
+        name, version, vendor, cpe = key
+        matches = []
+        ptoks = candidate_tokens(name)
+        if ptoks:
+            cand_ids = list(CveProductToken.objects.filter(token__in=ptoks)
                             .values_list("cve_id", flat=True).distinct())
-                for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
-                    m = match_product_to_cve(product, cve)
+            if cand_ids:
+                pseudo = SimpleNamespace(name=name, version=version, vendor=vendor, cpe=cpe)
+                for cve in CVE.objects.filter(cve_id__in=cand_ids):
+                    m = match_product_to_cve(pseudo, cve)
                     if m:
-                        results.append((cve, m.confidence, m.reason))
-            match_cache[key] = results
+                        matches.append((cve.cve_id, m.confidence, m.reason))
+                        needed.add(cve.cve_id)
+        cache[key] = matches
+        if j % 25 == 0 or j == len(uniques):
+            print(f"watch_loop: matched {j}/{len(uniques)} unique items…", flush=True)
 
-        for cve, confidence, reason in results:
+    # Phase 2 — write findings per device from the cache (writes only, fast).
+    cve_by_id = {c.cve_id: c for c in CVE.objects.filter(cve_id__in=needed)}
+    raised = refreshed = 0
+    products = Product.objects.select_related("asset", "asset__tenant")
+    total = products.count()
+    print(f"watch_loop: writing findings across {total} installed products…", flush=True)
+    for i, product in enumerate(products.iterator(chunk_size=1000), 1):
+        for cve_id, confidence, reason in cache.get(
+                (product.name, product.version, product.vendor, product.cpe), ()):
+            cve = cve_by_id.get(cve_id)
+            if not cve:
+                continue
             _, created = Finding.objects.update_or_create(
-                asset=asset, cve=cve, product=product,
+                asset=product.asset, cve=cve, product=product,
                 defaults={
-                    "tenant": asset.tenant,
-                    "priority": prioritise(cve, asset, confidence),
+                    "tenant": product.asset.tenant,
+                    "priority": prioritise(cve, product.asset, confidence),
                     "match_confidence": confidence,
                     "match_reason": (reason or "")[:300],
                     "last_seen": timezone.now(),
@@ -165,10 +174,9 @@ def watch_loop():
             )
             raised += int(created)
             refreshed += int(not created)
-
-        if i % 250 == 0 or i == total:
-            print(f"watch_loop: {i}/{total} products — {raised} raised, "
-                  f"{refreshed} refreshed ({len(match_cache)} unique)…", flush=True)
+        if i % 2000 == 0 or i == total:
+            print(f"watch_loop: wrote {i}/{total} products — {raised} new, "
+                  f"{refreshed} refreshed…", flush=True)
 
     notify_new_findings.delay()
     return f"watch_loop: {raised} new, {refreshed} refreshed"
