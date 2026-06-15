@@ -534,10 +534,14 @@ def adhoc_assess(job_id: int):
 
         base = target.split("/")[0]
         is_ip = discovery.looks_like_ip(target)
-        Asset.objects.get_or_create(
-            tenant=tenant, target=target,
-            defaults={"name": target, "kind": Asset.Kind.IP if is_ip else Asset.Kind.DOMAIN,
-                      "internet_facing": True})
+        # Several devices can share a target (a site's NAT egress IP), so don't
+        # get_or_create on it — that raises MultipleObjectsReturned. Create one
+        # only if none exists.
+        if not Asset.objects.filter(tenant=tenant, target=target).exists():
+            Asset.objects.create(
+                tenant=tenant, target=target, name=target,
+                kind=Asset.Kind.IP if is_ip else Asset.Kind.DOMAIN,
+                internet_facing=True)
 
         # Phase 1 — subdomains (skip for IPs).
         hosts = {target}
@@ -714,6 +718,80 @@ def assess_client(job_id: int):
         upd(status=ScanJob.Status.FAILED, phase="failed", finished_at=timezone.now())
         job.save(update_fields=["summary"])
     return f"assess_client[{job_id}]: {job.status}"
+
+
+@shared_task
+def assess_asset(job_id: int, asset_id: int):
+    """
+    Assess a single device. For an internal device this means matching its
+    installed software against the CVE corpus (its real exposure — there's no
+    per-device network address to scan). For an internet-facing device it also
+    runs an active Nuclei scan of its target.
+    """
+    from .models import ScanJob, Asset, CVE, Finding, CveProductToken
+    from .matching import tokens as name_tokens, match_product_to_cve
+
+    job = ScanJob.objects.get(pk=job_id)
+
+    def upd(**kw):
+        for k, v in kw.items():
+            setattr(job, k, v)
+        job.save(update_fields=list(kw))
+
+    upd(status=ScanJob.Status.RUNNING, started_at=timezone.now(), phase="starting…")
+    try:
+        asset = Asset.objects.get(pk=asset_id)
+        tenant = asset.tenant
+        products = list(asset.products.all())
+        upd(phase=f"Matching {len(products)} package(s) on {asset.name} against the CVE corpus…",
+            total=len(products), progress=0)
+
+        cve_matches = 0
+        for i, product in enumerate(products, 1):
+            ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+            if ptoks:
+                cand = (CveProductToken.objects.filter(token__in=ptoks)
+                        .values_list("cve_id", flat=True).distinct())
+                for cve in CVE.objects.filter(cve_id__in=list(cand)):
+                    m = match_product_to_cve(product, cve)
+                    if not m:
+                        continue
+                    Finding.objects.update_or_create(
+                        asset=asset, cve=cve, product=product,
+                        defaults={"tenant": tenant,
+                                  "priority": prioritise(cve, asset, m.confidence),
+                                  "match_confidence": m.confidence, "match_reason": m.reason,
+                                  "last_seen": timezone.now(), "scan_job": job})
+                    cve_matches += 1
+            if i % 20 == 0 or i == len(products):
+                upd(phase=f"Matched {i}/{len(products)} package(s) — {cve_matches} CVE(s)…",
+                    progress=i)
+
+        nuclei_found = 0
+        if asset.internet_facing and asset.target and tenant.scanning_authorised:
+            upd(phase=f"Active scan of {asset.target} with Nuclei…")
+            by_target = {asset.target: asset}
+            for line in _stream(["nuclei", "-target", asset.target, "-jsonl", "-silent",
+                                 "-severity", "low,medium,high,critical"]):
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if ingest_nuclei_record(tenant, by_target, r, scan_job=job):
+                    nuclei_found += 1
+                    upd(phase=f"Nuclei: {nuclei_found} finding(s) so far…")
+
+        mode = ("inventory + active scan" if (asset.internet_facing and tenant.scanning_authorised)
+                else "inventory match")
+        job.summary = (f"{asset.name}: {len(products)} package(s), "
+                       f"{cve_matches} CVE finding(s), {nuclei_found} scan finding(s) ({mode}).")
+        upd(status=ScanJob.Status.DONE, phase="done", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
+    except Exception as e:  # noqa: BLE001
+        job.summary = f"error: {e}"
+        upd(status=ScanJob.Status.FAILED, phase="failed", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
+    return f"assess_asset[{job_id}]: {job.status}"
 
 
 @shared_task

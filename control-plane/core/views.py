@@ -9,7 +9,7 @@ from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
 from .models import Finding, ScanJob, Tenant, Asset
-from .tasks import adhoc_assess, assess_client
+from .tasks import adhoc_assess, assess_client, assess_asset
 
 ORDER = ["P1", "P2", "P3", "P4", "P?"]
 
@@ -91,6 +91,21 @@ def client_scan_start(request, slug):
     assess_client.apply_async(args=[job.id], queue="scan")
     return JsonResponse({"job_id": job.id, "status": job.status,
                          "authorised": tenant.scanning_authorised})
+
+
+@login_required
+def asset_scan_start(request, slug, asset_id):
+    """Assess one device: inventory CVE match (internal) or +active scan (internet-facing)."""
+    tenant = get_object_or_404(Tenant, slug=slug)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    asset = get_object_or_404(Asset, pk=asset_id, tenant=tenant)
+    job = ScanJob.objects.create(
+        target=asset.name, tenant=tenant, do_nuclei=asset.internet_facing,
+        created_by=request.user if request.user.is_authenticated else None,
+    )
+    assess_asset.apply_async(args=[job.id, asset.id], queue="scan")
+    return JsonResponse({"job_id": job.id, "status": job.status})
 
 
 @login_required
