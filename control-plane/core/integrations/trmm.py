@@ -81,8 +81,8 @@ def run_script(agent_id: str, args=None, timeout: int = 120) -> dict:
     script_id = os.environ.get("TRMM_REMEDIATE_SCRIPT_ID", "")
     if not script_id:
         raise TRMMError("Set TRMM_REMEDIATE_SCRIPT_ID to the saved TRMM script's id.")
-    body = {"script": int(script_id), "args": args or [], "output": "wait",
-            "timeout": timeout, "run_as_user": False}
+    body = {"script": int(script_id), "args": args or [], "env_vars": [],
+            "output": "wait", "timeout": timeout, "run_as_user": False}
     r = requests.post(
         f"{url}/agents/{agent_id}/runscript/",
         headers={"Content-Type": "application/json", "X-API-KEY": key},
