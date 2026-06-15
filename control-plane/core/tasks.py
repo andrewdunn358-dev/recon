@@ -126,14 +126,14 @@ def watch_loop():
     from .models import Product, CVE, Finding, CveProductToken
     from .matching import candidate_tokens
 
-    # Phase 1 — match each UNIQUE piece of software once (the expensive part).
+    # Phase 1 — match each UNIQUE piece of software once.
     # 27k installed products collapse to a few thousand distinct (name,version)s,
-    # and those in turn share far fewer name-signatures: the candidate CVEs depend
-    # only on the product NAME, so fetch the corpus slice once per signature and
-    # reuse it across every version of that app (Chrome 120/121/122 → one fetch).
+    # which share far fewer name-signatures still. The matcher itself is memoised
+    # and near-free; the cost is DATABASE round-trips, so do them in bulk up front
+    # (one token lookup + one chunked CVE load) instead of two queries per
+    # signature — then match entirely in memory.
     uniques = list(Product.objects.values_list("name", "version", "vendor", "cpe").distinct())
     cache: dict = {}
-    needed: set = set()
 
     groups: dict = defaultdict(list)
     for key in uniques:
@@ -143,13 +143,39 @@ def watch_loop():
         else:
             cache[key] = []
     print(f"watch_loop: {len(uniques)} unique software items across "
-          f"{len(groups)} name-signatures to match against the corpus…", flush=True)
+          f"{len(groups)} name-signatures…", flush=True)
 
+    # (1) token -> {cve_id} for every token our software uses, in ONE query.
+    all_tokens = set().union(*groups.keys()) if groups else set()
+    tok_index: dict = defaultdict(set)
+    for token, cve_id in (CveProductToken.objects
+                          .filter(token__in=all_tokens)
+                          .values_list("token", "cve_id").iterator(chunk_size=20000)):
+        tok_index[token].add(cve_id)
+
+    # (2) resolve each signature's candidate cve_ids in memory; union them.
+    sig_cands: dict = {}
+    needed: set = set()
+    for toks in groups:
+        ids: set = set()
+        for t in toks:
+            ids.update(tok_index.get(t, ()))
+        sig_cands[toks] = ids
+        needed |= ids
+    print(f"watch_loop: loading {len(needed)} candidate CVEs…", flush=True)
+
+    # (3) load all candidate CVE rows ONCE (chunked) into a dict — no more DB
+    #     inside the match loop.
+    cve_by_id: dict = {}
+    needed_list = list(needed)
+    for i in range(0, len(needed_list), 5000):
+        for cve in CVE.objects.filter(cve_id__in=needed_list[i:i + 5000]):
+            cve_by_id[cve.cve_id] = cve
+
+    # (4) match in memory — fast (memoised tokeniser, no queries).
     done = 0
     for toks, keys in groups.items():
-        cand_ids = list(CveProductToken.objects.filter(token__in=toks)
-                        .values_list("cve_id", flat=True).distinct())
-        cands = list(CVE.objects.filter(cve_id__in=cand_ids)) if cand_ids else []
+        cands = [cve_by_id[cid] for cid in sig_cands[toks] if cid in cve_by_id]
         for key in keys:
             name, version, vendor, cpe = key
             pseudo = SimpleNamespace(name=name, version=version, vendor=vendor, cpe=cpe)
@@ -158,14 +184,12 @@ def watch_loop():
                 m = match_product_to_cve(pseudo, cve)
                 if m:
                     matches.append((cve.cve_id, m.confidence, m.reason))
-                    needed.add(cve.cve_id)
             cache[key] = matches
             done += 1
-            if done % 50 == 0 or done == len(uniques):
+            if done % 500 == 0 or done == len(uniques):
                 print(f"watch_loop: matched {done}/{len(uniques)} unique items…", flush=True)
 
-    # Phase 2 — write findings per device from the cache (writes only, fast).
-    cve_by_id = {c.cve_id: c for c in CVE.objects.filter(cve_id__in=needed)}
+    # Phase 2 — write findings per device from the cache (writes only).
     raised = refreshed = 0
     products = Product.objects.select_related("asset", "asset__tenant")
     total = products.count()
