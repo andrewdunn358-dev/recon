@@ -8,8 +8,9 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
-from .models import Finding, ScanJob, Tenant, Asset
-from .tasks import adhoc_assess, assess_client, assess_asset
+from .models import Finding, ScanJob, Tenant, Asset, RemediationAction
+from .tasks import adhoc_assess, assess_client, assess_asset, remediate_via_trmm
+from .integrations import trmm
 
 ORDER = ["P1", "P2", "P3", "P4", "P?"]
 
@@ -71,6 +72,7 @@ def client_detail(request, slug):
         "online_count": sum(1 for a in assets if a.status == "online"),
         "offline_count": len(offline),
         "last_job": tenant.scan_jobs.order_by("-created_at").first(),
+        "remediation_enabled": trmm.remediation_enabled(),
     }
     return render(request, "recon/client_detail.html", ctx)
 
@@ -106,6 +108,39 @@ def asset_scan_start(request, slug, asset_id):
     )
     assess_asset.apply_async(args=[job.id, asset.id], queue="scan")
     return JsonResponse({"job_id": job.id, "status": job.status})
+
+
+@login_required
+def remediate_start(request, finding_id):
+    """Human-approved push of a software update to a device's TRMM agent. Gated:
+    global REMEDIATION_ENABLED, a real agent id, and a software-backed finding."""
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    finding = get_object_or_404(Finding, pk=finding_id)
+    asset = finding.asset
+    if not trmm.remediation_enabled():
+        return JsonResponse({"error": "Remediation is disabled (REMEDIATION_ENABLED off)."}, status=403)
+    if not asset.tactical_rmm_agent_id:
+        return JsonResponse({"error": "No TRMM agent on this device."}, status=400)
+    if not finding.product:
+        return JsonResponse({"error": "Only software-update findings can be remediated here."}, status=400)
+
+    action = RemediationAction.objects.create(
+        finding=finding, asset=asset, agent_id=asset.tactical_rmm_agent_id,
+        kind="software_update", target_ref=finding.product.name,
+        requested_by=request.user if request.user.is_authenticated else None,
+    )
+    remediate_via_trmm.apply_async(args=[action.id], queue="scan")
+    return JsonResponse({"action_id": action.id, "status": action.status})
+
+
+@login_required
+def remediate_status(request):
+    try:
+        act = RemediationAction.objects.get(pk=request.GET.get("action"))
+    except (RemediationAction.DoesNotExist, ValueError, TypeError):
+        return JsonResponse({"error": "unknown action"}, status=404)
+    return JsonResponse({"status": act.status, "output": act.output[:600]})
 
 
 @login_required

@@ -41,6 +41,9 @@ class Asset(models.Model):
     # Stable upstream id (e.g. SynthOps device id) — sync keys on this so a
     # hostname change or re-run can't spawn a duplicate asset.
     external_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    # The device's TRMM agent id — lets Recon dispatch a remediation to the right
+    # agent (the agent that's already installed; no new agent needed).
+    tactical_rmm_agent_id = models.CharField(max_length=128, blank=True, default="")
     kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.HOST)
     # The single most important attribute for prioritisation (§5.4).
     internet_facing = models.BooleanField(default=False)
@@ -283,3 +286,37 @@ class ScanJob(models.Model):
 
     def __str__(self):
         return f"{self.target} [{self.status}]"
+
+
+class RemediationAction(models.Model):
+    """
+    An audited, human-approved request to push a fix to a device via TRMM
+    (§4.3/§11). Recon never auto-remediates — every row here was triggered by a
+    person, is scoped to one agent + one action, and records the outcome.
+    """
+    class Status(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        DONE = "done", "Done"
+        FAILED = "failed", "Failed"
+        BLOCKED = "blocked", "Blocked"   # gate not satisfied
+
+    finding = models.ForeignKey(Finding, on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="remediations")
+    asset = models.ForeignKey(Asset, on_delete=models.CASCADE, related_name="remediations")
+    agent_id = models.CharField(max_length=128)
+    kind = models.CharField(max_length=32, default="software_update")
+    # What we're acting on (e.g. the package name/id) — passed to the TRMM script.
+    target_ref = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.QUEUED)
+    output = models.TextField(blank=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                     null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind} {self.target_ref} on {self.asset} [{self.status}]"

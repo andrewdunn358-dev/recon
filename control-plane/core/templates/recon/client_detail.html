@@ -39,8 +39,12 @@
   .fcard .fp{font-family:var(--mono); font-weight:700; min-width:28px}
   .fcard .fl{font-family:var(--mono)} .fcard .fk{color:var(--p1); font-size:10px; font-weight:600}
   .fcard .fa{color:var(--faint); font-size:11.5px}
-  .fcard .fr{color:var(--dim); font-size:11.5px; margin-left:auto; max-width:46%;
+  .fcard .fr{color:var(--dim); font-size:11.5px; margin-left:auto; max-width:40%;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .remed{background:none; border:1px solid var(--ok); color:var(--ok); font-size:11px;
+    border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; transition:.12s}
+  .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
+  .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
   .empty{color:var(--faint); font-size:13px; padding:14px 0}
 {% endblock %}
 
@@ -88,6 +92,9 @@
     {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
     <span class="fa">{{ f.asset.name }}</span>
     <span class="fr">{{ f.match_reason }}</span>
+    {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
+    <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
+    {% endif %}
   </div>
   {% empty %}
   <p class="empty">No findings for this client yet.</p>
@@ -149,6 +156,27 @@
         note.textContent = ' '+(s.phase||s.status);
         if(s.status==='done'||s.status==='failed'){ clearInterval(t);
           note.textContent = ' '+s.status+' — refreshing…'; setTimeout(()=>location.reload(), 1500); }
+      }, 2500);
+    });
+  });
+  document.querySelectorAll('.remed').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.finding, name = btn.dataset.name, pkg = btn.dataset.pkg;
+      if(!confirm("Push an update for \""+pkg+"\" to "+name+" via TRMM?\n\nThis runs the configured TRMM remediation script on that device. Make sure you're happy to change this production machine.")) return;
+      const note = btn.nextElementSibling;
+      btn.disabled = true; note.textContent = ' sending…';
+      const url = "{% url 'remediate_start' 0 %}".replace(/0\/$/, id+'/');
+      let r;
+      try{ r = await fetch(url, {method:'POST',
+        headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}}); }
+      catch(e){ note.textContent=' network error'; btn.disabled=false; return; }
+      const d = await r.json();
+      if(!r.ok){ note.textContent=' '+(d.error||'failed'); btn.disabled=false; return; }
+      const t = setInterval(async ()=>{
+        const s = await (await fetch("{% url 'remediate_status' %}?action="+d.action_id)).json();
+        note.textContent = ' '+s.status;
+        if(['done','failed','blocked'].includes(s.status)){ clearInterval(t);
+          note.textContent = ' '+s.status+(s.output? ' — '+s.output.slice(0,80):''); }
       }, 2500);
     });
   });

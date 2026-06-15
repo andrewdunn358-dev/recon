@@ -795,6 +795,39 @@ def assess_asset(job_id: int, asset_id: int):
 
 
 @shared_task
+def remediate_via_trmm(action_id: int):
+    """
+    Execute one human-approved remediation by triggering the configured TRMM
+    script on the device's agent. Records the outcome. Never runs unless
+    REMEDIATION_ENABLED is set — the global off-switch.
+    """
+    from .models import RemediationAction
+    from .integrations import trmm
+
+    act = RemediationAction.objects.get(pk=action_id)
+    act.status = RemediationAction.Status.RUNNING
+    act.save(update_fields=["status"])
+    try:
+        if not trmm.remediation_enabled():
+            act.status = RemediationAction.Status.BLOCKED
+            act.output = "REMEDIATION_ENABLED is off — no action sent."
+        elif not act.agent_id:
+            act.status = RemediationAction.Status.BLOCKED
+            act.output = "No TRMM agent id on this device."
+        else:
+            res = trmm.run_script(act.agent_id,
+                                  args=[act.target_ref] if act.target_ref else [])
+            act.output = str(res.get("result"))[:5000]
+            act.status = RemediationAction.Status.DONE
+    except Exception as e:  # noqa: BLE001
+        act.output = f"error: {e}"
+        act.status = RemediationAction.Status.FAILED
+    act.finished_at = timezone.now()
+    act.save()
+    return f"remediate[{action_id}]: {act.status}"
+
+
+@shared_task
 def sync_synthops(reset=False):
     """
     Read Recon's inventory from SynthOps (the source of truth) and retire the
@@ -896,6 +929,7 @@ def sync_synthops(reset=False):
             asset.kind = Asset.Kind.HOST
             asset.target = target
             asset.internet_facing = bool(public_ip)
+            asset.tactical_rmm_agent_id = d.get("tactical_rmm_agent_id") or ""
             asset.status = (d.get("status") or "").strip().lower()
             hc = d.get("last_health_check")
             if hc:
