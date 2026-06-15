@@ -202,6 +202,14 @@ class Finding(models.Model):
             return self.cve_id
         return self.template_id or self.title or "finding"
 
+    SEVERITY_WORDS = {"P1": "Critical", "P2": "High", "P3": "Medium",
+                      "P4": "Low", "P?": "Review"}
+
+    @property
+    def severity_word(self):
+        """Plain-English priority for humans (Critical/High/Medium/Low/Review)."""
+        return self.SEVERITY_WORDS.get(self.priority, "Review")
+
     @property
     def remediation_links(self):
         """

@@ -45,6 +45,18 @@
     border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; transition:.12s}
   .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
   .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
+  .sevsum{display:flex; flex-wrap:wrap; gap:9px; align-items:center}
+  .sevchip{display:flex; flex-direction:column; align-items:center; min-width:76px;
+    border:1px solid var(--line); border-top:3px solid var(--faint); border-radius:8px;
+    padding:10px 8px; text-decoration:none; transition:.12s}
+  .sevchip:hover{background:var(--surface)}
+  .sevchip .n{font-family:var(--display); font-size:20px; color:var(--text)}
+  .sevchip .w{font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.05em}
+  .sevchip.p1{border-top-color:var(--p1)} .sevchip.p2{border-top-color:var(--p2)}
+  .sevchip.p3{border-top-color:var(--p3)} .sevchip.p4{border-top-color:var(--faint)}
+  .sevchip.p{border-top-color:var(--review)}
+  .sevall{margin-left:8px; font-size:12.5px; color:var(--p3); text-decoration:none}
+  .sevall:hover{text-decoration:underline}
   .empty{color:var(--faint); font-size:13px; padding:14px 0}
 {% endblock %}
 
@@ -84,21 +96,18 @@
     {% endfor %}
   </div>
 
-  <h2>Findings ({{ findings|length }})</h2>
-  {% for f in findings %}
-  <div class="fcard" style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
-    <span class="fp" style="color:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">{{ f.priority }}</span>
-    <span class="fl">{{ f.label }}</span>
-    {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
-    <span class="fa">{{ f.asset.name }}</span>
-    <span class="fr">{{ f.match_reason }}</span>
-    {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
-    <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
-    {% endif %}
+  <h2>Findings ({{ finding_total }})</h2>
+  {% if finding_total %}
+  <div class="sevsum">
+    {% for code, word, n in sev_counts %}
+    <a class="sevchip {{ code|slugify }}" href="{% url 'findings' %}?client={{ tenant.slug }}{% if code != 'P1' or True %}&sev={{ code|urlencode }}{% endif %}">
+      <span class="n">{{ n }}</span><span class="w">{{ word }}</span></a>
+    {% endfor %}
+    <a class="sevall" href="{% url 'findings' %}?client={{ tenant.slug }}">View all {{ finding_total }} findings →</a>
   </div>
-  {% empty %}
-  <p class="empty">No findings for this client yet.</p>
-  {% endfor %}
+  {% else %}
+  <p class="empty">No findings for this client yet. Run “Match CVEs” on a device, or “Scan this client”.</p>
+  {% endif %}
 </main>
 {% endblock %}
 

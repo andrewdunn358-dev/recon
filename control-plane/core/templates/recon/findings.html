@@ -1,0 +1,97 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — Findings{% endblock %}
+{% block style %}
+  .wrap{max-width:1180px; margin:0 auto; padding:30px 28px 80px}
+  h1{font-family:var(--display); font-size:22px; margin:0 0 4px}
+  .sub{color:var(--faint); font-size:12.5px; margin:0 0 20px; font-family:var(--mono)}
+  .sub a{color:var(--p3); text-decoration:none}
+  .filters{display:flex; flex-wrap:wrap; gap:7px; margin:0 0 22px}
+  .chip{font-size:12px; font-family:var(--mono); color:var(--dim); text-decoration:none;
+    border:1px solid var(--line); border-radius:20px; padding:5px 13px; transition:.12s}
+  .chip:hover{color:var(--text)} .chip.on{color:var(--bg); background:var(--text); border-color:var(--text)}
+  .chip .c{opacity:.6; margin-left:5px}
+  .fcard{display:flex; align-items:center; gap:13px; padding:11px 15px; font-size:13px;
+    border:1px solid var(--line); border-left:3px solid var(--c,var(--faint));
+    border-radius:7px; margin-bottom:7px}
+  .sev{font-family:var(--mono); font-weight:700; min-width:64px; font-size:12px}
+  .fl{font-family:var(--mono)} .fk{color:var(--p1); font-size:10px; font-weight:700;
+    border:1px solid var(--p1); border-radius:4px; padding:1px 5px}
+  .fa{color:var(--faint); font-size:11.5px}
+  .fa a{color:var(--faint); text-decoration:none} .fa a:hover{color:var(--text)}
+  .fr{color:var(--dim); font-size:11.5px; margin-left:auto; max-width:40%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .remed{background:none; border:1px solid var(--ok); color:var(--ok); font-size:11px;
+    border-radius:6px; padding:4px 10px; cursor:pointer; white-space:nowrap; transition:.12s}
+  .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
+  .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
+  .pager{display:flex; align-items:center; justify-content:center; gap:16px; margin-top:24px;
+    font-size:13px; font-family:var(--mono); color:var(--dim)}
+  .pager a{color:var(--p3); text-decoration:none; border:1px solid var(--line);
+    border-radius:7px; padding:6px 14px} .pager a:hover{border-color:var(--p3)}
+  .empty{color:var(--faint); font-size:13px; padding:24px 0}
+{% endblock %}
+
+{% block body %}
+<main class="wrap">
+  <h1>Findings</h1>
+  <p class="sub">{{ total }} total{% if tenant %} · {{ tenant.name }} · <a href="{% url 'findings' %}">all clients</a>{% endif %}</p>
+
+  <div class="filters">
+    <a class="chip {% if not sev %}on{% endif %}" href="?{% if client %}client={{ client }}{% endif %}">All<span class="c">{{ total }}</span></a>
+    {% for code, word, n in sev_rows %}
+    <a class="chip {% if sev == code %}on{% endif %}" href="?sev={{ code|urlencode }}{% if client %}&client={{ client }}{% endif %}">{{ word }}<span class="c">{{ n }}</span></a>
+    {% endfor %}
+  </div>
+
+  {% for f in page_obj %}
+  <div class="fcard" style="--c:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">
+    <span class="sev" style="color:{% if f.priority == 'P1' %}var(--p1){% elif f.priority == 'P2' %}var(--p2){% elif f.priority == 'P3' %}var(--p3){% elif f.priority == 'P?' %}var(--review){% else %}var(--faint){% endif %}">{{ f.severity_word }}</span>
+    <span class="fl">{{ f.label }}</span>
+    {% if f.cve.in_kev %}<span class="fk">KEV</span>{% endif %}
+    <span class="fa">{% if not tenant %}<a href="{% url 'client_detail' f.tenant.slug %}">{{ f.tenant.name }}</a> · {% endif %}{{ f.asset.name }}</span>
+    <span class="fr">{{ f.match_reason|default:f.title }}</span>
+    {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
+    <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
+    {% endif %}
+  </div>
+  {% empty %}
+  <p class="empty">No findings match this filter.</p>
+  {% endfor %}
+
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="pager">
+    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}{% if sev %}&sev={{ sev|urlencode }}{% endif %}{% if client %}&client={{ client }}{% endif %}">← Prev</a>{% endif %}
+    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}{% if sev %}&sev={{ sev|urlencode }}{% endif %}{% if client %}&client={{ client }}{% endif %}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const csrf = "{{ csrf_token }}";
+  document.querySelectorAll('.remed').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.finding, name = btn.dataset.name, pkg = btn.dataset.pkg;
+      if(!confirm("Push an update for \""+pkg+"\" to "+name+" via TRMM?\n\nThis runs the configured TRMM remediation script on that production device.")) return;
+      const note = btn.nextElementSibling;
+      btn.disabled = true; note.textContent = ' sending…';
+      const url = "{% url 'remediate_start' 0 %}".replace(/0\/$/, id+'/');
+      let r;
+      try{ r = await fetch(url, {method:'POST', headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}}); }
+      catch(e){ note.textContent=' network error'; btn.disabled=false; return; }
+      const d = await r.json();
+      if(!r.ok){ note.textContent=' '+(d.error||'failed'); btn.disabled=false; return; }
+      const t = setInterval(async ()=>{
+        const s = await (await fetch("{% url 'remediate_status' %}?action="+d.action_id)).json();
+        note.textContent = ' '+s.status;
+        if(['done','failed','blocked'].includes(s.status)){ clearInterval(t);
+          note.textContent = ' '+s.status+(s.output? ' — '+s.output.slice(0,80):''); }
+      }, 2500);
+    });
+  });
+})();
+</script>
+{% endblock %}

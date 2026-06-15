@@ -5,7 +5,7 @@ dashboard pattern the brief calls for. Handles both watch findings (CVE-backed)
 and active-scan findings (Nuclei, often CVE-less).
 """
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Q
+from django.db.models import Count, Q, F
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
 from .models import Finding, ScanJob, Tenant, Asset, RemediationAction
@@ -27,21 +27,67 @@ def _sort_findings(qs):
     return sorted(qs, key=lambda f: (ORDER.index(f.priority), -_epss(f)))
 
 
+def _rank():
+    from django.db.models import Case, When, IntegerField
+    return Case(When(priority="P1", then=0), When(priority="P2", then=1),
+                When(priority="P3", then=2), When(priority="P4", then=3),
+                default=4, output_field=IntegerField())
+
+
 @login_required
 def dashboard(request):
-    findings = list(Finding.objects.select_related("cve", "asset", "tenant", "product"))
-    findings.sort(key=lambda f: (ORDER.index(f.priority), -_epss(f)))
-
+    base = Finding.objects.all()
+    by_pri = {r["priority"]: r["n"] for r in base.values("priority").annotate(n=Count("id"))}
+    top = list(Finding.objects.select_related("cve", "asset", "tenant", "product")
+               .annotate(rank=_rank())
+               .order_by("rank", F("cve__epss").desc(nulls_last=True))[:40])
     ctx = {
-        "findings": findings,
-        "total": len(findings),
-        "kev_count": sum(1 for f in findings if f.cve and f.cve.in_kev),
-        "review_count": sum(1 for f in findings if f.priority == "P?"),
-        "exposed_count": sum(1 for f in findings if f.asset.internet_facing),
-        "scan_count": sum(1 for f in findings if f.source == "nuclei"),
+        "findings": top,
+        "total": base.count(),
+        "kev_count": base.filter(cve__in_kev=True).count(),
+        "p1_count": by_pri.get("P1", 0),
+        "p2_count": by_pri.get("P2", 0),
+        "review_count": by_pri.get("P?", 0),
+        "exposed_count": base.filter(asset__internet_facing=True).count(),
+        "scan_count": base.filter(source="nuclei").count(),
         "recent_jobs": ScanJob.objects.all()[:8],
     }
     return render(request, "recon/dashboard.html", ctx)
+
+
+@login_required
+def findings(request):
+    """Dedicated, paginated, filterable findings list (severity + client)."""
+    from django.core.paginator import Paginator
+    sev = request.GET.get("sev") or ""
+    client = request.GET.get("client") or ""
+    qs = (Finding.objects.select_related("cve", "asset", "tenant", "product")
+          .annotate(rank=_rank())
+          .order_by("rank", F("cve__epss").desc(nulls_last=True)))
+    if sev in ("P1", "P2", "P3", "P4", "P?"):
+        qs = qs.filter(priority=sev)
+    tenant = None
+    if client:
+        tenant = Tenant.objects.filter(slug=client).first()
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+    page = Paginator(qs, 100).get_page(request.GET.get("page"))
+    counts = {r["priority"]: r["n"] for r in
+              (Finding.objects.filter(tenant=tenant) if tenant else Finding.objects.all())
+              .values("priority").annotate(n=Count("id"))}
+    sev_rows = [(code, word, counts.get(code, 0)) for code, word in
+                (("P1", "Critical"), ("P2", "High"), ("P3", "Medium"),
+                 ("P4", "Low"), ("P?", "Review"))]
+    ctx = {
+        "page_obj": page,
+        "sev": sev,
+        "client": client,
+        "tenant": tenant,
+        "remediation_enabled": trmm.remediation_enabled(),
+        "total": sum(counts.values()),
+        "sev_rows": sev_rows,
+    }
+    return render(request, "recon/findings.html", ctx)
 
 
 @login_required
@@ -60,15 +106,19 @@ def client_detail(request, slug):
     tenant = get_object_or_404(Tenant, slug=slug)
     assets = (tenant.assets.prefetch_related("products", "findings")
               .order_by("-internet_facing", "name"))
-    findings = _sort_findings(
-        tenant.findings.select_related("cve", "asset", "product"))
     offline = [a for a in assets if a.status and a.status != "online"]
+    fcounts = {r["priority"]: r["n"] for r in
+               tenant.findings.values("priority").annotate(n=Count("id"))}
     ctx = {
         "tenant": tenant,
         "assets": assets,
-        "findings": findings,
-        "kev_count": sum(1 for f in findings if f.cve and f.cve.in_kev),
-        "review_count": sum(1 for f in findings if f.priority == "P?"),
+        "finding_total": sum(fcounts.values()),
+        "sev_counts": [("P1", "Critical", fcounts.get("P1", 0)),
+                       ("P2", "High", fcounts.get("P2", 0)),
+                       ("P3", "Medium", fcounts.get("P3", 0)),
+                       ("P4", "Low", fcounts.get("P4", 0)),
+                       ("P?", "Review", fcounts.get("P?", 0))],
+        "kev_count": tenant.findings.filter(cve__in_kev=True).count(),
         "online_count": sum(1 for a in assets if a.status == "online"),
         "offline_count": len(offline),
         "last_job": tenant.scan_jobs.order_by("-created_at").first(),
