@@ -80,6 +80,15 @@ def _cmp(a, b) -> int:
     return (a > b) - (a < b)
 
 
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}:\d{2}")
+
+
+def _is_date_like(v: str) -> bool:
+    """A 'version' that's really a date/timestamp (e.g. '2022-12-02 19:42:16')
+    must not be compared as a version — it produces nonsense matches."""
+    return bool(_DATE_RE.search(str(v or "")))
+
+
 def version_in_range(prod_version: str, vrange: dict) -> bool | None:
     """
     Evaluate a cvelistV5-style version range object against the product version.
@@ -90,6 +99,8 @@ def version_in_range(prod_version: str, vrange: dict) -> bool | None:
       {"version": "7.0.0", "lessThan": "7.2.5", "status": "affected"}
       {"version": "0", "lessThanOrEqual": "9.2", "status": "affected"}
     """
+    if _is_date_like(prod_version):
+        return None  # not a real version — don't claim a confident match
     pv = _parse_version(prod_version)
     if pv is None:
         return None

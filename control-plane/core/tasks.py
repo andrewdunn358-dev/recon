@@ -969,15 +969,27 @@ def sync_synthops(reset=False):
             if done % 20 == 0:
                 print(f"sync_synthops: software {done}/{len(agent_jobs)}...")
 
-    # Phase C: write products (sequential DB) from the fetched results.
+    # Phase C: upsert products (stable identity) so a re-sync updates in place
+    # rather than delete+recreate — which would orphan findings (product set null)
+    # and make the matcher pile up duplicate findings every run.
     for asset, agent_id in agent_jobs:
-        asset.products.filter(source="synthops").delete()
+        incoming = {}
         for sw in software.get(agent_id, []):
             row = trmm.normalise_software(sw)
-            if not row["name"]:
-                continue
-            Product.objects.create(asset=asset, source="synthops", **row)
+            if row["name"]:
+                incoming[row["name"]] = row  # last wins on duplicate names
+        for name, row in incoming.items():
+            obj = asset.products.filter(source="synthops", name=name).first()
+            if obj:
+                if obj.version != row.get("version", "") or obj.vendor != row.get("vendor", ""):
+                    obj.version = row.get("version", "")
+                    obj.vendor = row.get("vendor", "")
+                    obj.save(update_fields=["version", "vendor"])
+            else:
+                asset.products.create(source="synthops", **row)
             n_products += 1
+        # drop software that's no longer installed
+        asset.products.filter(source="synthops").exclude(name__in=incoming).delete()
 
     watch_loop()
     return (f"sync_synthops: {len(by_client)} clients ({new_tenants} new), "
