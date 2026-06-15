@@ -661,13 +661,17 @@ def sync_synthops(reset=False):
         t.save()
         return t, created
 
-    # clients -> tenants (keyed on SynthOps client id).
+    # clients -> tenants (keyed on SynthOps client id). Also index by name —
+    # client names are unique, and devices reliably carry client_name even when
+    # their client_id doesn't line up with the client record's id.
     by_client = {}
+    by_name = {}
     new_tenants = 0
     for c in so.clients():
         name = (c.get("name") or "Unknown").strip()
         tenant, created = ensure_tenant(c.get("id"), name, c.get("code") or name)
-        by_client[c.get("id")] = tenant
+        by_client[str(c.get("id"))] = tenant
+        by_name[name] = tenant
         new_tenants += int(created)
 
     # servers + workstations -> assets. Tag the source so we can report counts,
@@ -689,10 +693,15 @@ def sync_synthops(reset=False):
     for kind_label, d in ([("server", s) for s in server_list]
                           + [("workstation", w) for w in ws_list]):
         try:
-            tenant = by_client.get(d.get("client_id"))
-            if tenant is None:
-                cname = (d.get("client_name") or "Unknown").strip()
-                tenant, _ = ensure_tenant(None, cname, cname)
+            cname = (d.get("client_name") or "").strip()
+            tenant = (by_client.get(str(d.get("client_id")))
+                      or by_name.get(cname))
+            if tenant is None:  # genuinely unknown client — create once and cache
+                cname = cname or "Unknown"
+                tenant, _ = ensure_tenant(d.get("client_id"), cname, cname)
+                by_name[cname] = tenant
+                if d.get("client_id"):
+                    by_client[str(d.get("client_id"))] = tenant
 
             host = d.get("hostname") or str(d.get("id"))
             public_ip = (d.get("public_ip") or "").strip()
