@@ -128,6 +128,63 @@ def client_detail(request, slug):
 
 
 @login_required
+def asset_audit(request, slug, asset_id):
+    """Lay the matcher's reasoning bare for one device, so a human who knows the
+    machine can verify each finding against ground truth: the installed name and
+    version next to the CVE's raw affected data, the exact distinctive token that
+    triggered the match, and an in/out/inconclusive verdict per version range."""
+    from .matching import candidate_tokens, version_in_range, _describe_range
+    tenant = get_object_or_404(Tenant, slug=slug)
+    asset = get_object_or_404(Asset, pk=asset_id, tenant=tenant)
+    fs = (asset.findings.select_related("cve", "product")
+          .annotate(rank=_rank())
+          .order_by("rank", F("cve__epss").desc(nulls_last=True)))
+
+    verdict = {
+        True:  ("in",      "installed version IS inside this affected range"),
+        False: ("out",     "installed version is OUTSIDE this range — patched"),
+        None:  ("unknown", "version couldn't be evaluated against this range"),
+    }
+    audits = []
+    for f in fs:
+        p, cve = f.product, f.cve
+        evidence, why = [], []
+        if cve:
+            if cve.in_kev:
+                why.append("On CISA KEV — known to be exploited in the wild")
+            if cve.epss is not None:
+                why.append(f"EPSS {cve.epss:.0%} — modelled exploitation probability")
+            if cve.cvss is not None:
+                why.append(f"CVSS {cve.cvss} base score")
+        if asset.internet_facing:
+            why.append("This device is internet-facing")
+        if cve and p:
+            ptoks = candidate_tokens(p.name)
+            for aff in (cve.affected or []):
+                aprod = aff.get("product", "")
+                shared = sorted(ptoks & candidate_tokens(aprod))
+                if not shared:
+                    continue  # not an entry that could have triggered this match
+                ranges = []
+                for vr in (aff.get("versions") or []):
+                    state, text = verdict[version_in_range(p.version, vr)]
+                    ranges.append({"desc": _describe_range(vr), "state": state, "text": text})
+                evidence.append({
+                    "vendor": aff.get("vendor", ""), "product": aprod,
+                    "shared": shared, "ranges": ranges,
+                    "no_versions": not aff.get("versions"),
+                })
+        audits.append({
+            "f": f, "product": p, "cve": cve, "evidence": evidence, "why": why,
+            "nvd": f"https://nvd.nist.gov/vuln/detail/{cve.cve_id}" if cve else "",
+        })
+
+    return render(request, "recon/asset_audit.html", {
+        "tenant": tenant, "asset": asset, "audits": audits, "total": len(audits),
+    })
+
+
+@login_required
 def client_scan_start(request, slug):
     """Queue a whole-client assessment (CVE match all devices; active scan the
     internet-facing online ones if the client is §11-authorised)."""

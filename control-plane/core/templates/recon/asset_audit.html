@@ -1,0 +1,123 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — Audit {{ asset.name }}{% endblock %}
+{% block style %}
+  .wrap{max-width:1000px; margin:0 auto; padding:30px 28px 80px}
+  .back{font-size:12.5px; color:var(--dim); text-decoration:none}
+  .back:hover{color:var(--text)}
+  h1{font-family:var(--display); font-size:24px; margin:10px 0 4px}
+  .meta{color:var(--faint); font-size:12.5px; margin:0 0 8px; font-family:var(--mono)}
+  .note{border:1px solid var(--line); border-left:3px solid var(--p3); background:var(--surface);
+    border-radius:9px; padding:13px 16px; font-size:12.5px; color:var(--dim); margin:18px 0 26px; line-height:1.6}
+  .note b{color:var(--text)} .note .hi{color:var(--ok)} .note .md{color:var(--p3)} .note .lo{color:var(--review)}
+
+  .card{border:1px solid var(--line); border-left:3px solid var(--c,var(--faint));
+    border-radius:11px; padding:16px 18px; margin-bottom:14px; background:var(--surface)}
+  .chead{display:flex; align-items:center; gap:11px; flex-wrap:wrap; margin-bottom:14px}
+  .pri{font-family:var(--mono); font-weight:700; font-size:12px; padding:3px 9px; border-radius:6px;
+    border:1px solid var(--c,var(--faint)); color:var(--c,var(--text))}
+  .cveid{font-family:var(--mono); font-size:13.5px; color:var(--text); text-decoration:none}
+  .cveid:hover{color:var(--p3); text-decoration:underline}
+  .kev{font-size:10px; font-weight:700; color:var(--p1); border:1px solid var(--p1);
+    border-radius:5px; padding:2px 6px; letter-spacing:.04em}
+  .conf{margin-left:auto; font-size:11px; font-family:var(--mono); padding:3px 9px; border-radius:6px}
+  .conf.high{color:var(--ok); border:1px solid var(--ok)}
+  .conf.medium{color:var(--p3); border:1px solid var(--p3)}
+  .conf.low{color:var(--review); border:1px solid var(--review)}
+  .title{font-size:13px; color:var(--dim); margin:-6px 0 14px}
+
+  .cmp{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media(max-width:680px){ .cmp{grid-template-columns:1fr} }
+  .box{border:1px solid var(--line); border-radius:9px; padding:12px 14px; background:var(--bg)}
+  .box h4{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
+    margin:0 0 9px; font-weight:600}
+  .inst .pname{font-family:var(--display); font-size:16px; color:var(--text)}
+  .inst .pver{font-family:var(--mono); font-size:14px; color:var(--ok); margin-top:2px}
+  .inst .pextra{font-family:var(--mono); font-size:11px; color:var(--faint); margin-top:6px; word-break:break-all}
+
+  .aff{font-size:12.5px; margin-bottom:11px} .aff:last-child{margin-bottom:0}
+  .aff .ap{font-family:var(--mono); color:var(--text)}
+  .aff .av{color:var(--faint); font-size:11px}
+  .shared{font-size:10.5px; color:var(--dim); margin:4px 0 6px}
+  .shared code{font-family:var(--mono); color:var(--ok); background:rgba(58,215,197,.08);
+    padding:1px 5px; border-radius:4px; margin-right:4px}
+  .rng{display:flex; align-items:baseline; gap:8px; font-size:11.5px; padding:3px 0}
+  .rng .rd{font-family:var(--mono); color:var(--dim)}
+  .rng .rv{font-size:10.5px; margin-left:auto; white-space:nowrap}
+  .rng .rv.in{color:var(--p2)} .rng .rv.out{color:var(--ok)} .rng .rv.unknown{color:var(--review)}
+  .rng .rdot{width:6px;height:6px;border-radius:50%;flex:none}
+  .rv.in .rdot,.in>.rdot{background:var(--p2)}
+
+  .verdict{margin-top:14px; font-size:13px; color:var(--text); line-height:1.55}
+  .verdict .vlab{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:block; margin-bottom:3px}
+  .why{display:flex; flex-wrap:wrap; gap:6px; margin-top:11px}
+  .why span{font-size:10.5px; color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-family:var(--mono)}
+  .verify{display:inline-block; margin-top:12px; font-size:11.5px; color:var(--p3); text-decoration:none}
+  .verify:hover{text-decoration:underline}
+  .empty{color:var(--faint); font-size:13px; padding:20px 0}
+  .nogate{font-size:11.5px; color:var(--faint); font-style:italic}
+{% endblock %}
+
+{% block body %}
+<main class="wrap">
+  <a class="back" href="{% url 'client_detail' tenant.slug %}">← {{ tenant.name }}</a>
+  <h1>Audit · {{ asset.name }}</h1>
+  <p class="meta">{{ asset.get_kind_display }} · {% if asset.internet_facing %}internet-facing{% else %}internal{% endif %}
+    · {{ asset.products.count }} installed products · {{ total }} findings</p>
+
+  <div class="note">
+    Every finding below is shown with the evidence the matcher used, so you can check it against this machine yourself.
+    <b>Installed</b> is what Recon pulled from inventory; <b>CVE affected</b> is what the advisory claims, with the
+    distinctive token(s) that linked them and an in/out verdict per version range.
+    Confidence: <span class="hi">high</span> = CPE-confirmed, trustworthy · <span class="md">medium</span> = name + version provably in range, usually right, skim it ·
+    <span class="lo">low / review</span> = a human glance, <b>not</b> grounds for action.
+  </div>
+
+  {% for a in audits %}
+  <div class="card {{ a.f.priority|slugify }}" style="--c:{% if a.f.priority == 'P1' %}var(--p1){% elif a.f.priority == 'P2' %}var(--p2){% elif a.f.priority == 'P3' %}var(--p3){% elif a.f.priority == 'P4' %}var(--faint){% else %}var(--review){% endif %}">
+    <div class="chead">
+      <span class="pri">{{ a.f.priority }} · {{ a.f.severity_word }}</span>
+      {% if a.cve %}<a class="cveid" href="{{ a.nvd }}" target="_blank" rel="noopener">{{ a.cve.cve_id }} ↗</a>{% else %}<span class="cveid">{{ a.f.title }}</span>{% endif %}
+      {% if a.cve.in_kev %}<span class="kev">KEV</span>{% endif %}
+      <span class="conf {{ a.f.match_confidence|default:'low' }}">{{ a.f.match_confidence|default:"—" }}</span>
+    </div>
+    {% if a.cve and a.cve.title %}<div class="title">{{ a.cve.title }}</div>{% endif %}
+
+    <div class="cmp">
+      <div class="box inst">
+        <h4>Installed on this device</h4>
+        {% if a.product %}
+          <div class="pname">{{ a.product.name }}</div>
+          <div class="pver">{{ a.product.version|default:"version unknown" }}</div>
+          <div class="pextra">{% if a.product.vendor %}vendor: {{ a.product.vendor }}<br>{% endif %}{% if a.product.cpe %}{{ a.product.cpe }}{% endif %}</div>
+        {% else %}
+          <div class="nogate">Active-scan finding — no installed-software record (came from a network probe, not inventory).</div>
+        {% endif %}
+      </div>
+      <div class="box">
+        <h4>CVE says affected</h4>
+        {% for e in a.evidence %}
+          <div class="aff">
+            <span class="ap">{{ e.product|default:"(unnamed product)" }}</span>
+            {% if e.vendor %}<span class="av"> · {{ e.vendor }}</span>{% endif %}
+            <div class="shared">linked by {% for t in e.shared %}<code>{{ t }}</code>{% endfor %}</div>
+            {% for r in e.ranges %}
+              <div class="rng"><span class="rd">{{ r.desc }}</span><span class="rv {{ r.state }}">{{ r.text }}</span></div>
+            {% empty %}
+              {% if e.no_versions %}<div class="rng"><span class="rd">no version range published</span><span class="rv unknown">can't confirm — review</span></div>{% endif %}
+            {% endfor %}
+          </div>
+        {% empty %}
+          <div class="nogate">{% if a.cve %}No affected entry shared a distinctive token with the installed name.{% else %}—{% endif %}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if a.f.match_reason %}<div class="verdict"><span class="vlab">Matcher's reasoning</span>{{ a.f.match_reason }}</div>{% endif %}
+    {% if a.why %}<div class="why">{% for w in a.why %}<span>{{ w }}</span>{% endfor %}</div>{% endif %}
+    {% if a.nvd %}<a class="verify" href="{{ a.nvd }}" target="_blank" rel="noopener">Verify against NVD ↗</a>{% endif %}
+  </div>
+  {% empty %}
+  <p class="empty">No findings on this device. Run “Match CVEs” for it from the client page.</p>
+  {% endfor %}
+</main>
+{% endblock %}

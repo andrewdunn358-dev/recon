@@ -3,7 +3,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework.authtoken.views import obtain_auth_token
-from core.views import dashboard, findings as findings_view, scan_start, scan_status, clients, client_detail, client_scan_start, asset_scan_start, remediate_start, remediate_status
+from core.views import dashboard, findings as findings_view, scan_start, scan_status, clients, client_detail, client_scan_start, asset_scan_start, asset_audit, remediate_start, remediate_status
 from core.api import TenantViewSet, AssetViewSet, FindingViewSet, ScanViewSet
 
 router = DefaultRouter()
@@ -19,6 +19,7 @@ urlpatterns = [
     path("clients/<slug:slug>/", client_detail, name="client_detail"),
     path("clients/<slug:slug>/scan/", client_scan_start, name="client_scan_start"),
     path("clients/<slug:slug>/asset/<int:asset_id>/scan/", asset_scan_start, name="asset_scan_start"),
+    path("clients/<slug:slug>/asset/<int:asset_id>/audit/", asset_audit, name="asset_audit"),
     path("scan/start/", scan_start, name="scan_start"),
     path("scan/status/", scan_status, name="scan_status"),
     path("remediate/<int:finding_id>/", remediate_start, name="remediate_start"),
