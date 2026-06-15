@@ -49,6 +49,12 @@ class Asset(models.Model):
         help_text="Scannable target: hostname/IP/URL. Used by the Nuclei worker.",
     )
     last_seen = models.DateTimeField(null=True, blank=True)
+    # Online/offline from the source of truth (SynthOps health check). Lets us
+    # flag devices that were unreachable so they can be revisited — their
+    # inventory may be stale and they can't be actively scanned while down.
+    status = models.CharField(max_length=16, blank=True, default="",
+                              help_text="online / offline / unknown, per last SynthOps health check.")
+    last_health_check = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.name} ({self.tenant.slug})"

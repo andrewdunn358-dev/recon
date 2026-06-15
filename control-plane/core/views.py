@@ -9,7 +9,7 @@ from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
 from .models import Finding, ScanJob, Tenant, Asset
-from .tasks import adhoc_assess
+from .tasks import adhoc_assess, assess_client
 
 ORDER = ["P1", "P2", "P3", "P4", "P?"]
 
@@ -61,14 +61,36 @@ def client_detail(request, slug):
               .order_by("-internet_facing", "name"))
     findings = _sort_findings(
         tenant.findings.select_related("cve", "asset", "product"))
+    offline = [a for a in assets if a.status and a.status != "online"]
     ctx = {
         "tenant": tenant,
         "assets": assets,
         "findings": findings,
         "kev_count": sum(1 for f in findings if f.cve and f.cve.in_kev),
         "review_count": sum(1 for f in findings if f.priority == "P?"),
+        "online_count": sum(1 for a in assets if a.status == "online"),
+        "offline_count": len(offline),
+        "last_job": tenant.scan_jobs.order_by("-created_at").first(),
     }
     return render(request, "recon/client_detail.html", ctx)
+
+
+@login_required
+def client_scan_start(request, slug):
+    """Queue a whole-client assessment (CVE match all devices; active scan the
+    internet-facing online ones if the client is §11-authorised)."""
+    tenant = get_object_or_404(Tenant, slug=slug)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    job = ScanJob.objects.create(
+        target=f"client: {tenant.name}",
+        tenant=tenant,
+        do_nuclei=True,
+        created_by=request.user if request.user.is_authenticated else None,
+    )
+    assess_client.apply_async(args=[job.id], queue="scan")
+    return JsonResponse({"job_id": job.id, "status": job.status,
+                         "authorised": tenant.scanning_authorised})
 
 
 @login_required

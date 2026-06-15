@@ -9,13 +9,25 @@
   .meta .auth-on{color:var(--ok)} .meta .auth-off{color:var(--p2)}
   h2{font-family:var(--display); font-size:15px; margin:30px 0 12px}
   .alist{border:1px solid var(--line); border-radius:10px; overflow:hidden}
-  .arow{display:grid; grid-template-columns:1.4fr .8fr 1.4fr 1fr .7fr .7fr .9fr; gap:10px;
+  .arow{display:grid; grid-template-columns:1.4fr .7fr 1.3fr .9fr .8fr .6fr .6fr .9fr; gap:10px;
     align-items:center; padding:11px 16px; border-bottom:1px solid var(--line); font-size:13px}
   .arow:last-child{border-bottom:none}
   .arow.head{background:var(--surface); color:var(--faint); font-size:10.5px;
     letter-spacing:.06em; text-transform:uppercase}
   .arow .mono{font-family:var(--mono); color:var(--dim)}
+  .st{font-size:11px; font-family:var(--mono); display:flex; align-items:center; gap:6px}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--faint); flex:none}
+  .st.online .dot{background:var(--ok)} .st.online{color:var(--ok)}
+  .st.offline .dot{background:var(--p2)} .st.offline{color:var(--p2)}
   .exp{font-size:11px; color:var(--faint)} .exp.on{color:var(--p2)}
+  .scanbar{display:flex; align-items:center; gap:14px; margin:4px 0 22px;
+    padding:13px 16px; border:1px solid var(--line); border-radius:10px; background:var(--surface)}
+  .scanbar .lead{font-size:12.5px; color:var(--dim)}
+  .scanbar .lead b{color:var(--ok)} .scanbar .lead .off{color:var(--p2)}
+  .cscan{margin-left:auto; background:none; border:1px solid var(--p3); color:var(--p3);
+    font-size:12.5px; border-radius:7px; padding:7px 16px; cursor:pointer; transition:.12s}
+  .cscan:hover{background:rgba(84,185,255,.1)} .cscan:disabled{opacity:.5; cursor:default}
+  .cstat{font-family:var(--mono); font-size:11.5px; color:var(--faint)}
   .assess{background:none; border:1px solid var(--line); color:var(--p3);
     font-size:11.5px; border-radius:6px; padding:4px 11px; cursor:pointer; transition:.12s}
   .assess:hover{border-color:var(--p3); background:rgba(84,185,255,.08)}
@@ -40,11 +52,17 @@
     {% if tenant.scanning_authorised %}<span class="auth-on">authorised</span>{% else %}<span class="auth-off">not authorised (§11)</span>{% endif %}
     · {{ kev_count }} exploited now · {{ review_count }} need review</p>
 
+  <div class="scanbar">
+    <span class="lead"><b>{{ online_count }}</b> online · <span class="off">{{ offline_count }}</span> offline · {{ assets|length }} total</span>
+    <span class="cstat" id="cstat">{% if last_job %}last: {{ last_job.summary|default:last_job.get_status_display }}{% endif %}</span>
+    <button class="cscan" id="cscan">Scan this client</button>
+  </div>
+
   <h2>Assets ({{ assets|length }})</h2>
   <div class="alist">
     <div class="arow head">
       <span>Asset</span><span>Kind</span><span>Target</span><span>Exposure</span>
-      <span>Software</span><span>Findings</span><span></span>
+      <span>Status</span><span>Software</span><span>Findings</span><span></span>
     </div>
     {% for a in assets %}
     <div class="arow">
@@ -52,6 +70,7 @@
       <span class="mono">{{ a.get_kind_display }}</span>
       <span class="mono">{{ a.target|default:"—" }}</span>
       <span class="exp {% if a.internet_facing %}on{% endif %}">{% if a.internet_facing %}internet-facing{% else %}internal{% endif %}</span>
+      <span class="st {% if a.status == 'online' %}online{% elif a.status %}offline{% endif %}"><span class="dot"></span>{{ a.status|default:"unknown" }}</span>
       <span class="mono">{{ a.products.count }}</span>
       <span class="mono">{{ a.findings.count }}</span>
       <span>{% if a.target %}<button class="assess" data-target="{{ a.target }}">Assess</button><span class="ast"></span>{% endif %}</span>
@@ -81,6 +100,34 @@
 (function(){
   const csrf = "{{ csrf_token }}";
   const slug = "{{ tenant.slug }}";
+  const authorised = {{ tenant.scanning_authorised|yesno:"true,false" }};
+
+  const cscan = document.getElementById('cscan');
+  const cstat = document.getElementById('cstat');
+  if(cscan) cscan.addEventListener('click', async ()=>{
+    let msg = "Assess this whole client?\n\n• CVE-match every device (safe, passive)";
+    msg += authorised
+      ? "\n• Actively scan internet-facing online hosts (this client is authorised, §11)"
+      : "\n• Active scanning is OFF — client not authorised (§11); CVE match only";
+    if(!confirm(msg)) return;
+    cscan.disabled = true; cstat.textContent = 'queuing…';
+    let r;
+    try{ r = await fetch("{% url 'client_scan_start' tenant.slug %}", {method:'POST',
+      headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}}); }
+    catch(e){ cstat.textContent='network error'; cscan.disabled=false; return; }
+    const d = await r.json();
+    if(!r.ok){ cstat.textContent=(d.error||'failed'); cscan.disabled=false; return; }
+    const id = d.job_id;
+    const t = setInterval(async ()=>{
+      const s = await (await fetch("{% url 'scan_status' %}?job="+id)).json();
+      let p = s.phase || s.status;
+      if(s.total) p += '  ('+s.progress+'/'+s.total+')';
+      cstat.textContent = p;
+      if(s.status==='done'||s.status==='failed'){ clearInterval(t);
+        cstat.textContent = s.summary || s.status; setTimeout(()=>location.reload(), 2000); }
+    }, 2500);
+  });
+
   document.querySelectorAll('.assess').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const target = btn.dataset.target;

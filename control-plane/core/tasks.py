@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 from celery import shared_task
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from . import feeds
 from .matching import match_product_to_cve
@@ -616,6 +617,106 @@ def adhoc_assess(job_id: int):
 
 
 @shared_task
+def assess_client(job_id: int):
+    """
+    Assess a whole client in one job (triggered from the client page).
+
+    Two phases, reported live on the ScanJob the page polls:
+      1. CVE match — passive, always runs — re-match every product on every one
+         of the client's devices against the corpus (uses last-known inventory,
+         so offline devices are still covered from their last sync).
+      2. Active scan — only if the tenant is §11-authorised — Nuclei against the
+         client's internet-facing, *online* hosts. Offline hosts are skipped and
+         listed so they can be revisited when they come back up.
+    """
+    from .models import ScanJob, Asset, Product, CVE, Finding, CveProductToken
+    from .matching import tokens as name_tokens, match_product_to_cve
+
+    job = ScanJob.objects.get(pk=job_id)
+
+    def upd(**kw):
+        for k, v in kw.items():
+            setattr(job, k, v)
+        job.save(update_fields=list(kw))
+
+    upd(status=ScanJob.Status.RUNNING, started_at=timezone.now(), phase="starting…")
+    try:
+        tenant = job.tenant
+        assets = list(tenant.assets.all())
+        online = [a for a in assets if a.status == "online"]
+        offline = [a for a in assets if a.status and a.status != "online"]
+
+        # Phase 1 — CVE match across the whole client (passive, always allowed).
+        upd(phase=f"Matching {len(assets)} device(s) against the CVE corpus…",
+            total=len(assets), progress=0)
+        cve_matches = 0
+        for i, asset in enumerate(assets, 1):
+            for product in asset.products.all():
+                ptoks = {t for t in name_tokens(product.name) if len(t) > 1 and not t.isdigit()}
+                if not ptoks:
+                    continue
+                cand = (CveProductToken.objects.filter(token__in=ptoks)
+                        .values_list("cve_id", flat=True).distinct())
+                for cve in CVE.objects.filter(cve_id__in=list(cand)):
+                    m = match_product_to_cve(product, cve)
+                    if not m:
+                        continue
+                    Finding.objects.update_or_create(
+                        asset=asset, cve=cve, product=product,
+                        defaults={"tenant": tenant,
+                                  "priority": prioritise(cve, asset, m.confidence),
+                                  "match_confidence": m.confidence, "match_reason": m.reason,
+                                  "last_seen": timezone.now(), "scan_job": job})
+                    cve_matches += 1
+            if i % 5 == 0 or i == len(assets):
+                upd(phase=f"Matching device {i}/{len(assets)} — {cve_matches} CVE finding(s)…",
+                    progress=i)
+
+        # Phase 2 — active scan of internet-facing, ONLINE hosts (gated by §11).
+        nuclei_found = 0
+        scanned = 0
+        if not tenant.scanning_authorised:
+            note = "active scan skipped — client not authorised for scanning (§11)"
+        else:
+            targets = {a.target: a for a in online
+                       if a.internet_facing and a.target}
+            if not targets:
+                note = "no internet-facing online hosts to actively scan"
+            else:
+                tlist = list(targets)
+                upd(phase=f"Active scan of {len(tlist)} internet-facing host(s) with Nuclei…",
+                    total=len(tlist), progress=0)
+                with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as tf:
+                    tf.write("\n".join(tlist))
+                    tfile = tf.name
+                for line in _stream(["nuclei", "-list", tfile, "-jsonl", "-silent",
+                                     "-severity", "low,medium,high,critical"]):
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if ingest_nuclei_record(tenant, targets, r, scan_job=job):
+                        nuclei_found += 1
+                        upd(phase=f"Nuclei: {nuclei_found} finding(s) so far…", progress=nuclei_found)
+                scanned = len(tlist)
+                note = f"actively scanned {scanned} internet-facing host(s)"
+
+        revisit = ", ".join(a.name for a in offline[:30])
+        job.summary = (
+            f"{len(assets)} device(s): {len(online)} online, {len(offline)} offline. "
+            f"{cve_matches} CVE finding(s), {nuclei_found} scan finding(s). {note}."
+            + (f" Offline — revisit when up: {revisit}"
+               + ("…" if len(offline) > 30 else "") if offline else ""))
+        upd(status=ScanJob.Status.DONE, phase="done", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
+    except Exception as e:  # noqa: BLE001
+        job.summary = f"error: {e}"
+        upd(status=ScanJob.Status.FAILED, phase="failed", finished_at=timezone.now())
+        job.save(update_fields=["summary"])
+    return f"assess_client[{job_id}]: {job.status}"
+
+
+@shared_task
 def sync_synthops(reset=False):
     """
     Read Recon's inventory from SynthOps (the source of truth) and retire the
@@ -717,6 +818,12 @@ def sync_synthops(reset=False):
             asset.kind = Asset.Kind.HOST
             asset.target = target
             asset.internet_facing = bool(public_ip)
+            asset.status = (d.get("status") or "").strip().lower()
+            hc = d.get("last_health_check")
+            if hc:
+                parsed = parse_datetime(hc)
+                if parsed:
+                    asset.last_health_check = parsed
             asset.last_seen = timezone.now()
             asset.save()
 
