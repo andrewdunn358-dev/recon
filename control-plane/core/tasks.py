@@ -128,36 +128,47 @@ def watch_loop():
     qs = Product.objects.select_related("asset", "asset__tenant")
     total = qs.count()
     print(f"watch_loop: matching {total} products against the CVE corpus "
-          f"(this is the slow part)…")
+          f"(this is the slow part)…", flush=True)
+
+    # The expensive work (candidate lookup + version compare) depends only on the
+    # software identity, not the device — so compute it once per unique
+    # (name, version, vendor, cpe) and reuse across every device that runs it.
+    match_cache: dict = {}
 
     for i, product in enumerate(qs.iterator(chunk_size=500), 1):
         asset = product.asset
-        ptoks = candidate_tokens(product.name)
-        if ptoks:
-            cand_ids = (CveProductToken.objects
-                        .filter(token__in=ptoks)
-                        .values_list("cve_id", flat=True).distinct())
-            for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
-                m = match_product_to_cve(product, cve)
-                if not m:
-                    continue
-                priority = prioritise(cve, asset, m.confidence)
-                finding, created = Finding.objects.update_or_create(
-                    asset=asset, cve=cve, product=product,
-                    defaults={
-                        "tenant": asset.tenant,
-                        "priority": priority,
-                        "match_confidence": m.confidence,
-                        "match_reason": (m.reason or "")[:300],
-                        "last_seen": timezone.now(),
-                    },
-                )
-                if created:
-                    raised += 1
-                else:
-                    refreshed += 1
-        if i % 1000 == 0 or i == total:
-            print(f"watch_loop: {i}/{total} products — {raised} raised, {refreshed} refreshed…")
+        key = (product.name, product.version, product.vendor, product.cpe)
+        results = match_cache.get(key)
+        if results is None:
+            results = []
+            ptoks = candidate_tokens(product.name)
+            if ptoks:
+                cand_ids = (CveProductToken.objects
+                            .filter(token__in=ptoks)
+                            .values_list("cve_id", flat=True).distinct())
+                for cve in CVE.objects.filter(cve_id__in=list(cand_ids)):
+                    m = match_product_to_cve(product, cve)
+                    if m:
+                        results.append((cve, m.confidence, m.reason))
+            match_cache[key] = results
+
+        for cve, confidence, reason in results:
+            _, created = Finding.objects.update_or_create(
+                asset=asset, cve=cve, product=product,
+                defaults={
+                    "tenant": asset.tenant,
+                    "priority": prioritise(cve, asset, confidence),
+                    "match_confidence": confidence,
+                    "match_reason": (reason or "")[:300],
+                    "last_seen": timezone.now(),
+                },
+            )
+            raised += int(created)
+            refreshed += int(not created)
+
+        if i % 250 == 0 or i == total:
+            print(f"watch_loop: {i}/{total} products — {raised} raised, "
+                  f"{refreshed} refreshed ({len(match_cache)} unique)…", flush=True)
 
     notify_new_findings.delay()
     return f"watch_loop: {raised} new, {refreshed} refreshed"
