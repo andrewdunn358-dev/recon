@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 # ----- normalisation -------------------------------------------------------
 
@@ -27,8 +28,14 @@ _NOISE = re.compile(
 _NONWORD = re.compile(r"[^a-z0-9]+")
 
 
+@lru_cache(maxsize=200_000)
 def normalise(s: str) -> str:
-    """Lowercase, strip vendor noise, collapse to spaced tokens."""
+    """Lowercase, strip vendor noise, collapse to spaced tokens.
+
+    Memoised: called millions of times across a match run on a bounded set of
+    distinct strings (product names + corpus affected-product names). The regex
+    work dominated runtime before this cache.
+    """
     if not s:
         return ""
     s = s.lower()
@@ -37,8 +44,9 @@ def normalise(s: str) -> str:
     return " ".join(s.split())
 
 
-def tokens(s: str) -> set[str]:
-    return set(normalise(s).split())
+@lru_cache(maxsize=200_000)
+def tokens(s: str) -> frozenset[str]:
+    return frozenset(normalise(s).split())
 
 
 # Generic vendor / filler words that must NOT, on their own, constitute a
@@ -58,11 +66,12 @@ STOPWORDS = {
 }
 
 
-def candidate_tokens(s: str) -> set[str]:
+@lru_cache(maxsize=200_000)
+def candidate_tokens(s: str) -> frozenset[str]:
     """Distinctive, indexable tokens for a name: drop stopwords, pure-numbers,
     and 1-char tokens. Used for CVE candidate selection and the match gate."""
-    return {t for t in tokens(s)
-            if len(t) > 1 and not t.isdigit() and t not in STOPWORDS}
+    return frozenset(t for t in tokens(s)
+                     if len(t) > 1 and not t.isdigit() and t not in STOPWORDS)
 
 
 def affected_product_tokens(affected) -> set[str]:
@@ -80,6 +89,7 @@ def affected_product_tokens(affected) -> set[str]:
 
 # ----- version handling ----------------------------------------------------
 
+@lru_cache(maxsize=200_000)
 def _parse_version(v: str):
     """
     Tolerant version parse. Vendor version strings are a swamp ('28.1',
