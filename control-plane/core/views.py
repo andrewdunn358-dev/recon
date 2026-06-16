@@ -57,34 +57,70 @@ def dashboard(request):
 
 @login_required
 def findings(request):
-    """Dedicated, paginated, filterable findings list (severity + client)."""
+    """Findings grouped by CVE — the unit of work. One row per vulnerability with
+    the count of affected devices, expandable to the device list (same-device
+    duplicates from multiple inventory entries collapsed)."""
     from django.core.paginator import Paginator
+    from django.db.models import Min
+    from collections import defaultdict
     sev = request.GET.get("sev") or ""
     client = request.GET.get("client") or ""
-    qs = (Finding.objects.select_related("cve", "asset", "tenant", "product")
-          .annotate(rank=_rank())
-          .order_by("rank", F("cve__epss").desc(nulls_last=True)))
-    if sev in ("P1", "P2", "P3", "P4", "P?"):
-        qs = qs.filter(priority=sev)
+    base = Finding.objects.all()
     tenant = None
     if client:
         tenant = Tenant.objects.filter(slug=client).first()
         if tenant:
-            qs = qs.filter(tenant=tenant)
-    page = Paginator(qs, 100).get_page(request.GET.get("page"))
-    counts = {r["priority"]: r["n"] for r in
-              (Finding.objects.filter(tenant=tenant) if tenant else Finding.objects.all())
-              .values("priority").annotate(n=Count("id"))}
+            base = base.filter(tenant=tenant)
+    fqs = base
+    if sev in ("P1", "P2", "P3", "P4", "P?"):
+        fqs = fqs.filter(priority=sev)
+
+    # Group by CVE. priority codes sort P1<P2<P3<P4<P? lexically, so Min() gives
+    # the most severe priority that CVE reached on any device.
+    groups = (fqs.values("cve_id", "cve__title", "cve__summary",
+                         "cve__in_kev", "cve__epss", "cve__cvss")
+                 .annotate(devices=Count("asset", distinct=True),
+                           pri=Min("priority"))
+                 .order_by("pri", F("cve__epss").desc(nulls_last=True)))
+    page = Paginator(groups, 50).get_page(request.GET.get("page"))
+
+    # Affected devices for the CVEs on this page (one query), deduped per asset.
+    cve_ids = [g["cve_id"] for g in page]
+    by_cve = defaultdict(list)
+    if cve_ids:
+        seen = set()
+        for f in (fqs.filter(cve_id__in=cve_ids)
+                  .select_related("asset", "tenant", "product")
+                  .annotate(rank=_rank()).order_by("rank", "asset__name")):
+            k = (f.cve_id, f.asset_id)
+            if k in seen:
+                continue
+            seen.add(k)
+            by_cve[f.cve_id].append(f)
+
+    WORD = {"P1": "Critical", "P2": "High", "P3": "Medium", "P4": "Low", "P?": "Review"}
+    rows = []
+    for g in page:
+        rows.append({
+            "cve_id": g["cve_id"], "title": g["cve__title"], "summary": g["cve__summary"],
+            "in_kev": g["cve__in_kev"], "epss": g["cve__epss"], "cvss": g["cve__cvss"],
+            "devices": g["devices"], "pri": g["pri"],
+            "severity_word": WORD.get(g["pri"], "—"),
+            "affected": by_cve.get(g["cve_id"], []),
+            "nvd": f"https://nvd.nist.gov/vuln/detail/{g['cve_id']}",
+        })
+
+    # Chips count DISTINCT CVEs per severity, to match the grouped list.
+    counts = {r["priority"]: r["c"] for r in
+              base.values("priority").annotate(c=Count("cve", distinct=True))}
     sev_rows = [(code, word, counts.get(code, 0)) for code, word in
                 (("P1", "Critical"), ("P2", "High"), ("P3", "Medium"),
                  ("P4", "Low"), ("P?", "Review"))]
     ctx = {
-        "page_obj": page,
-        "sev": sev,
-        "client": client,
-        "tenant": tenant,
+        "page_obj": page, "rows": rows, "sev": sev, "client": client, "tenant": tenant,
         "remediation_enabled": trmm.remediation_enabled(),
-        "total": sum(counts.values()),
+        "total_cves": base.values("cve").distinct().count(),
+        "total_findings": base.count(),
         "sev_rows": sev_rows,
     }
     return render(request, "recon/findings.html", ctx)
@@ -95,8 +131,8 @@ def clients(request):
     tenants = Tenant.objects.annotate(
         asset_count=Count("assets", distinct=True),
         exposed_count=Count("assets", filter=Q(assets__internet_facing=True), distinct=True),
-        finding_count=Count("findings", distinct=True),
-        p1_count=Count("findings", filter=Q(findings__priority="P1"), distinct=True),
+        finding_count=Count("findings__cve", distinct=True),
+        p1_count=Count("findings__cve", filter=Q(findings__priority="P1"), distinct=True),
     ).order_by("-p1_count", "name")
     return render(request, "recon/clients.html", {"tenants": tenants})
 
@@ -108,7 +144,7 @@ def client_detail(request, slug):
               .order_by("-internet_facing", "name"))
     offline = [a for a in assets if a.status and a.status != "online"]
     fcounts = {r["priority"]: r["n"] for r in
-               tenant.findings.values("priority").annotate(n=Count("id"))}
+               tenant.findings.values("priority").annotate(n=Count("cve", distinct=True))}
     ctx = {
         "tenant": tenant,
         "assets": assets,
