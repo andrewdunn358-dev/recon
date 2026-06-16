@@ -77,6 +77,16 @@ STOPWORDS = {
     "bit", "kb", "based", "framework",
 }
 
+# Platform qualifiers. If a CVE's affected product names one of these and the
+# installed product doesn't, they're different builds (this inventory is all
+# Windows agents, so a "... for Mac" CVE matching a Windows install is a certain
+# false positive). Matched against full tokens(), not candidate_tokens.
+_PLATFORM_TOKENS = frozenset({
+    "mac", "macos", "osx", "macintosh", "android", "ios", "iphone", "ipad",
+    "ipados", "tvos", "watchos", "linux", "unix", "ubuntu", "debian", "redhat",
+    "fedora", "suse", "solaris", "freebsd",
+})
+
 
 @lru_cache(maxsize=200_000)
 def candidate_tokens(s: str) -> frozenset[str]:
@@ -155,6 +165,17 @@ def version_in_range(prod_version: str, vrange: dict) -> bool | None:
     lte = _parse_version(vrange.get("lessThanOrEqual", ""))
     base = _parse_version(vrange.get("version", ""))
 
+    # Cross-scheme guard: catch ranges where the source dropped a prefix from the
+    # upper bound — e.g. lower "16.0.0" but upper "5215.1000" (should have been
+    # 16.0.5215.1000). The tell is an upper bound with FEWER components than the
+    # lower AND a different leading number, which makes a tuple compare nonsense.
+    # (Legit single-scheme ranges like Chrome "118 -> 121" are same-length and
+    # pass through.)
+    upper = lt if lt is not None else lte
+    if (base is not None and upper is not None
+            and len(base) > len(upper) and base[0] != upper[0]):
+        return None
+
     # Exact-version statement with no range.
     if base is not None and lt is None and lte is None:
         return _cmp(pv, base) == 0
@@ -216,6 +237,12 @@ def match_product_to_cve(product, cve) -> Match | None:
         # The product names must share a DISTINCTIVE token (not just a vendor word
         # like "microsoft"), or it isn't really the same product.
         if not (candidate_tokens(product.name) & candidate_tokens(aff.get("product", ""))):
+            continue
+
+        # Platform guard: a CVE for "... for Mac"/Android/iOS/Linux must not match a
+        # product that doesn't itself name that platform.
+        a_plat = a_product_t & _PLATFORM_TOKENS
+        if a_plat and not (a_plat & p_name_t):
             continue
 
         vendor_ok = bool(p_vendor_t & a_vendor_t) or not (p_vendor_t and a_vendor_t)
