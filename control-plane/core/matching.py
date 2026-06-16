@@ -63,6 +63,18 @@ STOPWORDS = {
     "version", "update", "updates", "edition", "professional", "enterprise",
     "standard", "server", "client", "tools", "runtime", "redistributable",
     "win", "win32", "win64",
+    # Generic platform / component / wrapper words. These are common across many
+    # different product names, so on their own they must NOT anchor a match —
+    # otherwise every "Windows ..." app matches every Windows CVE, every "... Agent"
+    # matches every agent CVE, etc. (the cause of the false-positive pile-up). Real
+    # product names survive because their distinctive token remains (e.g. "Zabbix
+    # Agent" -> {zabbix}, "Dell Display Manager" -> {display}).
+    "windows", "desktop", "agent", "manager", "component", "components",
+    "core", "framework", "host", "driver", "drivers", "module", "modules",
+    "plugin", "plugins", "extension", "extensions", "feature", "features",
+    "helper", "assistant", "installation", "installer", "package", "packages",
+    "pack", "based", "service", "services", "x64", "x86", "amd64", "arm64",
+    "bit", "kb", "based", "framework",
 }
 
 
@@ -227,21 +239,12 @@ def match_product_to_cve(product, cve) -> Match | None:
                 f"affected range ({_describe_range(matched_range)}) for this CVE.",
             )
 
-        # 3) product matched but no range confirmed it.
-        # If the CVE listed versions and every one was conclusively OUT of range
-        # (nothing inconclusive), this device is patched — not a finding.
-        if versions and not any_inconclusive:
-            continue
-        # Otherwise the version was genuinely inconclusive (unparseable/date-like)
-        # or the CVE gave no version info -> low (review).
-        if vendor_ok:
-            who = (aff.get("product") or "this software").strip()
-            cand = Match(
-                "low",
-                f"This device runs {who}, which this CVE affects, but the version "
-                f"couldn't be confirmed against the affected range — needs review.",
-            )
-            best = best or cand
+        # 3) product name matched but the version was NOT confirmed in range.
+        # Recon only raises a finding when it can confirm exposure — a version
+        # provably in the affected range (medium) or a CPE match (high). A bare
+        # name match with an unconfirmable version is not actionable and was the
+        # single largest source of false positives, so it is NOT a finding.
+        continue
 
     return best
 
