@@ -136,13 +136,22 @@ def _cmp(a, b) -> int:
     return (a > b) - (a < b)
 
 
-_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}:\d{2}")
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}:\d{2}|\d{1,2}/\d{1,2}/\d{2,4}")
 
 
 def _is_date_like(v: str) -> bool:
-    """A 'version' that's really a date/timestamp (e.g. '2022-12-02 19:42:16')
-    must not be compared as a version — it produces nonsense matches."""
+    """A 'version' that's really a date/timestamp (e.g. '2022-12-02 19:42:16' or
+    '04/27/2012') must not be compared as a version — it produces nonsense."""
     return bool(_DATE_RE.search(str(v or "")))
+
+
+def _major_scheme(v) -> str:
+    """Rough version-numbering 'scheme' by the magnitude of the leading component.
+    Year-style schemes (Adobe '2020.013.x', SolarWinds '2017.x') carry a 4-digit
+    year as the major; short-major schemes (Acrobat '26.x', Chrome '121') don't.
+    Comparing across the two is meaningless — '2020' is a bigger number than '26'
+    but an OLDER release — so a mismatch means we can't compare."""
+    return "year" if v and v[0] >= 1000 else "short"
 
 
 def version_in_range(prod_version: str, vrange: dict) -> bool | None:
@@ -157,6 +166,11 @@ def version_in_range(prod_version: str, vrange: dict) -> bool | None:
     """
     if _is_date_like(prod_version):
         return None  # not a real version — don't claim a confident match
+    # Commit hashes and dates aren't comparable software versions. Linux kernel
+    # CVEs use git hashes; some appliance/router CVEs use date "versions" like
+    # "241108" — comparing an app's 1.3.1 against those is nonsense.
+    if (vrange.get("versionType") or "").lower() in ("git", "date"):
+        return None
     pv = _parse_version(prod_version)
     if pv is None:
         return None
@@ -164,6 +178,14 @@ def version_in_range(prod_version: str, vrange: dict) -> bool | None:
     lt = _parse_version(vrange.get("lessThan", ""))
     lte = _parse_version(vrange.get("lessThanOrEqual", ""))
     base = _parse_version(vrange.get("version", ""))
+
+    # Year-track vs short-major guard. If the product version and any bound sit on
+    # opposite sides of the year threshold (e.g. Acrobat device 26.001 vs an
+    # affected bound of 2020.013), they're different numbering schemes and a tuple
+    # compare lies (26 < 2020 -> "vulnerable" when 26.x is actually newer).
+    for b in (lt, lte, base):
+        if b is not None and _major_scheme(pv) != _major_scheme(b):
+            return None
 
     # Cross-scheme guard: catch ranges where the source dropped a prefix from the
     # upper bound — e.g. lower "16.0.0" but upper "5215.1000" (should have been
