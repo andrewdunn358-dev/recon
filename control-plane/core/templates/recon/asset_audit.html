@@ -68,8 +68,11 @@
     Every finding below is shown with the evidence the matcher used, so you can check it against this machine yourself.
     <b>Installed</b> is what Recon pulled from inventory; <b>CVE affected</b> is what the advisory claims, with the
     distinctive token(s) that linked them and an in/out verdict per version range.
-    Confidence: <span class="hi">high</span> = CPE-confirmed, trustworthy · <span class="md">medium</span> = name + version provably in range, usually right, skim it ·
-    <span class="lo">low / review</span> = a human glance, <b>not</b> grounds for action.
+    Confidence is <b>how it was matched</b>, not how sure we are it's exploitable:
+    <span class="hi">CPE-confirmed</span> = the advisory's CPE matched this product ·
+    <span class="md">name + version match</span> = the name and version line up but
+    we can't confirm it's the same product (a Windows tool and a Linux build can
+    share a name) — <b>verify against this machine before acting</b>.
   </div>
 
   {% for a in audits %}
@@ -78,7 +81,7 @@
       <span class="pri">{{ a.f.priority }} · {{ a.f.severity_word }}</span>
       {% if a.cve %}<a class="cveid" href="{{ a.nvd }}" target="_blank" rel="noopener">{{ a.cve.cve_id }} ↗</a>{% else %}<span class="cveid">{{ a.f.title }}</span>{% endif %}
       {% if a.cve.in_kev %}<span class="kev">KEV</span>{% endif %}
-      <span class="conf {{ a.f.match_confidence|default:'low' }}">{{ a.f.match_confidence|default:"—" }}</span>
+      <span class="conf {{ a.f.match_confidence|default:'low' }}">{{ a.f.confidence_label|default:"—" }}</span>
     </div>
     {% if a.cve and a.cve.title %}<div class="title">{{ a.cve.title }}</div>{% endif %}
 

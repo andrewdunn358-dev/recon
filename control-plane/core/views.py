@@ -72,8 +72,17 @@ def findings(request):
         if tenant:
             base = base.filter(tenant=tenant)
     fqs = base
+    # Default view is the WORKLIST: KEV + Critical + High — the short, act-this-week
+    # set. Everything else (Medium/Low/Review) sits behind an explicit click, and
+    # ?sev=all opens the full firehose. A name+version match is a candidate to
+    # verify on the audit page, not a confirmed fact, so we lead with the few that
+    # are worth that verification effort.
+    WORKLIST_Q = Q(priority__in=["P1", "P2"]) | Q(cve__in_kev=True)
     if sev in ("P1", "P2", "P3", "P4", "P?"):
         fqs = fqs.filter(priority=sev)
+    elif sev != "all":
+        sev = ""  # normalise; empty == worklist
+        fqs = fqs.filter(WORKLIST_Q)
 
     # Group by CVE. priority codes sort P1<P2<P3<P4<P? lexically, so Min() gives
     # the most severe priority that CVE reached on any device.
@@ -116,11 +125,13 @@ def findings(request):
     sev_rows = [(code, word, counts.get(code, 0)) for code, word in
                 (("P1", "Critical"), ("P2", "High"), ("P3", "Medium"),
                  ("P4", "Low"), ("P?", "Review"))]
+    worklist_count = base.filter(WORKLIST_Q).values("cve").distinct().count()
     ctx = {
         "page_obj": page, "rows": rows, "sev": sev, "client": client, "tenant": tenant,
         "remediation_enabled": trmm.remediation_enabled(),
         "total_cves": base.values("cve").distinct().count(),
         "total_findings": base.count(),
+        "worklist_count": worklist_count,
         "sev_rows": sev_rows,
     }
     return render(request, "recon/findings.html", ctx)

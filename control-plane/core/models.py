@@ -211,6 +211,19 @@ class Finding(models.Model):
         return self.SEVERITY_WORDS.get(self.priority, "Review")
 
     @property
+    def confidence_label(self):
+        """Honest description of HOW this was matched — not a reliability score.
+        'high' means the CVE's CPE matched the product's CPE (confirmed). 'medium'
+        means the name and version line up but we could not confirm it is the same
+        product (same-name/different-platform cases exist) — so it needs a human
+        glance at the audit page before action."""
+        if self.source == "nuclei":
+            return "active scan"
+        return {"high": "CPE-confirmed",
+                "medium": "name + version match — verify"}.get(
+                    self.match_confidence, self.match_confidence or "")
+
+    @property
     def remediation_links(self):
         """
         A curated list of {label, url} pointing at fix guidance. CVE findings get

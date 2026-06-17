@@ -55,13 +55,14 @@
 {% block body %}
 <main class="wrap">
   <h1>Findings</h1>
-  <p class="sub">{{ total_cves }} distinct CVEs across {{ total_findings }} device findings{% if tenant %} · {{ tenant.name }} · <a href="{% url 'findings' %}">all clients</a>{% endif %}</p>
+  <p class="sub">{% if not sev %}Worklist — KEV, Critical &amp; High. The few worth acting on this week.{% elif sev == 'all' %}All findings — name + version matches, verify before acting.{% else %}{{ total_cves }} distinct CVEs at this level.{% endif %}{% if tenant %} · {{ tenant.name }} · <a href="{% url 'findings' %}{% if sev %}?sev={{ sev|urlencode }}{% endif %}">all clients</a>{% endif %}</p>
 
   <div class="filters">
-    <a class="chip {% if not sev %}on{% endif %}" href="?{% if client %}client={{ client }}{% endif %}">All<span class="c">{{ total_cves }}</span></a>
+    <a class="chip {% if not sev %}on{% endif %}" href="?{% if client %}client={{ client }}{% endif %}">Worklist<span class="c">{{ worklist_count }}</span></a>
     {% for code, word, n in sev_rows %}
     <a class="chip {% if sev == code %}on{% endif %}" href="?sev={{ code|urlencode }}{% if client %}&client={{ client }}{% endif %}">{{ word }}<span class="c">{{ n }}</span></a>
     {% endfor %}
+    <a class="chip {% if sev == 'all' %}on{% endif %}" href="?sev=all{% if client %}&client={{ client }}{% endif %}">All<span class="c">{{ total_cves }}</span></a>
   </div>
 
   {% for r in rows %}

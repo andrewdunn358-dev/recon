@@ -219,7 +219,7 @@
   {% if findings %}
   <div style="display:flex; align-items:baseline; justify-content:space-between; margin:0 0 6px">
     <span style="font-family:var(--mono); font-size:11.5px; color:var(--faint)">Top {{ findings|length }} by priority</span>
-    <a href="{% url 'findings' %}" style="font-size:12.5px; color:var(--p3); text-decoration:none">View all {{ total }} findings →</a>
+    <a href="{% url 'findings' %}" style="font-size:12.5px; color:var(--p3); text-decoration:none">Open worklist →</a>
   </div>
   <div class="findings">
     <div class="finding head">
@@ -249,7 +249,7 @@
         <span class="tenant">{{ f.tenant.name }}</span>
         <span class="status">{{ f.get_status_display }}</span>
       </div>
-      <div class="why"><b>{% if f.source == 'nuclei' %}active scan{% else %}{{ f.match_confidence }} confidence{% endif %}</b> — {{ f.match_reason }}</div>
+      <div class="why"><b>{{ f.confidence_label }}</b> — {{ f.match_reason }}</div>
       {% if f.remediation %}<div class="fixtext">{{ f.remediation }}</div>{% endif %}
       {% with links=f.remediation_links %}{% if links %}
       <div class="fix"><span class="fixlabel">Remediation</span>
