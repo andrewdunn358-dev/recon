@@ -117,10 +117,18 @@ def _parse_version(v: str):
     Tolerant version parse. Vendor version strings are a swamp ('28.1',
     '7.2.4', '2024.003.20180', 'v1.2-rc1'), so we extract the leading numeric
     dotted run and compare as an int tuple. Returns None if unparseable.
+
+    Rejects strings that are sentences or lists rather than versions — CVE bounds
+    like 'OMS Agent for Linux GA v1.13.40-0' or 'DSC Agent versions: 2.71.1.25,
+    2.70.0.30, 3.0.0.3' would otherwise yield a stray number and a nonsense compare.
     """
     if not v:
         return None
-    m = re.search(r"(\d+(?:\.\d+){0,4})", str(v))
+    s = str(v).strip()
+    # A real version has no embedded spaces, commas, colons or semicolons.
+    if any(ch in s for ch in (" ", ",", ":", ";")):
+        return None
+    m = re.search(r"(\d+(?:\.\d+){0,4})", s)
     if not m:
         return None
     return tuple(int(x) for x in m.group(1).split("."))
