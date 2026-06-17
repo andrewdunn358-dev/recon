@@ -321,6 +321,7 @@ class RemediationAction(models.Model):
         DONE = "done", "Done"
         FAILED = "failed", "Failed"
         BLOCKED = "blocked", "Blocked"   # gate not satisfied
+        TIMEOUT = "timeout", "Timed out — outcome unknown"
 
     finding = models.ForeignKey(Finding, on_delete=models.SET_NULL, null=True, blank=True,
                                 related_name="remediations")

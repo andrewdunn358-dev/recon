@@ -137,7 +137,7 @@
       const t = setInterval(async ()=>{
         const s = await (await fetch("{% url 'remediate_status' %}?action="+d.action_id)).json();
         note.textContent = ' '+s.status;
-        if(['done','failed','blocked'].includes(s.status)){ clearInterval(t);
+        if(['done','failed','blocked','timeout'].includes(s.status)){ clearInterval(t);
           note.textContent = ' '+s.status+(s.output? ' — '+s.output.slice(0,80):''); }
       }, 2500);
     });

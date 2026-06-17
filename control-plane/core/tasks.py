@@ -878,9 +878,24 @@ def remediate_via_trmm(action_id: int):
             act.output = "No TRMM agent id on this device."
         else:
             pkg = trmm.winget_query(act.target_ref)
-            res = trmm.run_script(act.agent_id, args=[pkg] if pkg else [])
-            act.output = str(res.get("result"))[:5000]
-            act.status = RemediationAction.Status.DONE
+            # winget upgrades download an installer and run it under SYSTEM; on a
+            # slow box Firefox/Office/runtimes routinely take minutes. 120s cut them
+            # off mid-install, so give the script real headroom.
+            res = trmm.run_script(act.agent_id, args=[pkg] if pkg else [], timeout=600)
+            result = res.get("result")
+            # When TRMM's wait elapses it returns the literal "timeout" — the script
+            # is most likely still running on the agent, so the outcome is UNKNOWN,
+            # not success. Say so honestly rather than marking it done.
+            if isinstance(result, str) and result.strip().lower() == "timeout":
+                act.status = RemediationAction.Status.TIMEOUT
+                act.output = (
+                    "TRMM's wait window elapsed before the upgrade returned. It is "
+                    "most likely still running on the device. Re-sync inventory in a "
+                    "few minutes and confirm the version moved; if it hasn't, re-run "
+                    "or check the device directly. (Outcome unknown — not confirmed.)")
+            else:
+                act.output = str(result)[:5000]
+                act.status = RemediationAction.Status.DONE
     except Exception as e:  # noqa: BLE001
         act.output = f"error: {e}"
         act.status = RemediationAction.Status.FAILED
