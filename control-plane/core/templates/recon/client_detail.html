@@ -89,9 +89,9 @@
       <span class="mono">{{ a.target|default:"—" }}</span>
       <span class="exp {% if a.internet_facing %}on{% endif %}">{% if a.internet_facing %}internet-facing{% else %}internal{% endif %}</span>
       <span class="st {% if a.status == 'online' %}online{% elif a.status %}offline{% endif %}"><span class="dot"></span>{{ a.status|default:"unknown" }}</span>
-      <span class="mono">{{ a.products.count }}</span>
-      <span class="mono">{{ a.findings.count }}</span>
-      <span>{% if a.products.count or a.target %}<button class="assess" data-asset="{{ a.id }}" data-name="{{ a.name }}" data-net="{{ a.internet_facing|yesno:'1,0' }}">{% if a.internet_facing %}Assess{% else %}Match CVEs{% endif %}</button><span class="ast"></span>{% endif %}{% if a.findings.count %} <a class="alink" href="{% url 'asset_audit' tenant.slug a.id %}">Audit ({{ a.findings.count }})</a>{% endif %}</span>
+      <span class="mono">{{ a.n_products }}</span>
+      <span class="mono">{{ a.n_findings }}</span>
+      <span>{% if a.n_products or a.target %}<button class="assess" data-asset="{{ a.id }}" data-name="{{ a.name }}" data-net="{{ a.internet_facing|yesno:'1,0' }}">{% if a.internet_facing %}Assess{% else %}Match CVEs{% endif %}</button><span class="ast"></span>{% endif %}{% if a.n_findings %} <a class="alink" href="{% url 'asset_audit' tenant.slug a.id %}">Audit ({{ a.n_findings }})</a>{% endif %}</span>
     </div>
     {% empty %}
     <div class="arow"><span>No assets. Run sync_synthops, or assess a target from Triage.</span></div>

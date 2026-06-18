@@ -95,7 +95,7 @@ class CVE(models.Model):
     summary = models.TextField(blank=True)
 
     # Enrichment signals — these drive prioritisation (§5.4).
-    in_kev = models.BooleanField(default=False)  # CISA KEV: exploited right now
+    in_kev = models.BooleanField(default=False, db_index=True)  # CISA KEV: exploited right now
     kev_date_added = models.DateField(null=True, blank=True)
     epss = models.FloatField(null=True, blank=True)  # 0..1 exploitation probability
     cvss = models.FloatField(null=True, blank=True)  # base score, treated as noisy
@@ -191,6 +191,16 @@ class Finding(models.Model):
 
     class Meta:
         ordering = ["priority"]
+        indexes = [
+            # Per-priority distinct-CVE counts (Findings chips) and grouping.
+            models.Index(fields=["priority", "cve"]),
+            # Per-client and per-client-per-priority distinct-CVE counts.
+            models.Index(fields=["tenant", "priority", "cve"]),
+            # Findings grouped by CVE with distinct device counts.
+            models.Index(fields=["cve", "asset"]),
+            # The stale-finding sweep filters source + last_seen.
+            models.Index(fields=["source", "last_seen"]),
+        ]
 
     def __str__(self):
         return f"{self.label} on {self.asset} [{self.priority}]"

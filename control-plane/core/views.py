@@ -8,7 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, F
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
-from .models import Finding, ScanJob, Tenant, Asset, RemediationAction, Suppression
+from .models import Finding, ScanJob, Tenant, Asset, Product, RemediationAction, Suppression
 from .tasks import adhoc_assess, assess_client, assess_asset, remediate_via_trmm
 from .integrations import trmm
 
@@ -140,20 +140,40 @@ def findings(request):
 
 @login_required
 def clients(request):
-    tenants = Tenant.objects.annotate(
-        asset_count=Count("assets", distinct=True),
-        exposed_count=Count("assets", filter=Q(assets__internet_facing=True), distinct=True),
-        finding_count=Count("findings__cve", distinct=True),
-        p1_count=Count("findings__cve", filter=Q(findings__priority="P1"), distinct=True),
-    ).order_by("-p1_count", "name")
+    # Compute each aggregate in its OWN grouped query. Annotating asset counts and
+    # finding counts on one queryset makes the DB cross-join assets x findings per
+    # tenant (millions of rows for a big client just to get two numbers) — the
+    # cause of the slow Clients page. Separate grouped queries hit indexes instead.
+    acount = dict(Asset.objects.values_list("tenant").annotate(c=Count("id")).values_list("tenant", "c"))
+    ecount = dict(Asset.objects.filter(internet_facing=True).values_list("tenant")
+                  .annotate(c=Count("id")).values_list("tenant", "c"))
+    fcount = dict(Finding.objects.values_list("tenant").annotate(c=Count("cve", distinct=True))
+                  .values_list("tenant", "c"))
+    p1count = dict(Finding.objects.filter(priority="P1").values_list("tenant")
+                   .annotate(c=Count("cve", distinct=True)).values_list("tenant", "c"))
+    tenants = list(Tenant.objects.all())
+    for t in tenants:
+        t.asset_count = acount.get(t.id, 0)
+        t.exposed_count = ecount.get(t.id, 0)
+        t.finding_count = fcount.get(t.id, 0)
+        t.p1_count = p1count.get(t.id, 0)
+    tenants.sort(key=lambda t: (-t.p1_count, t.name.lower()))
     return render(request, "recon/clients.html", {"tenants": tenants})
 
 
 @login_required
 def client_detail(request, slug):
     tenant = get_object_or_404(Tenant, slug=slug)
-    assets = (tenant.assets.prefetch_related("products", "findings")
-              .order_by("-internet_facing", "name"))
+    assets = list(tenant.assets.order_by("-internet_facing", "name"))
+    # Per-asset counts as two grouped queries, not prefetch_related (which would
+    # load every Finding/Product object — thousands for a big client — just to .count).
+    pc = dict(Product.objects.filter(asset__tenant=tenant).values_list("asset")
+              .annotate(c=Count("id")).values_list("asset", "c"))
+    fc = dict(Finding.objects.filter(tenant=tenant).values_list("asset")
+              .annotate(c=Count("id")).values_list("asset", "c"))
+    for a in assets:
+        a.n_products = pc.get(a.id, 0)
+        a.n_findings = fc.get(a.id, 0)
     offline = [a for a in assets if a.status and a.status != "online"]
     fcounts = {r["priority"]: r["n"] for r in
                tenant.findings.values("priority").annotate(n=Count("cve", distinct=True))}
