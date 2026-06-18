@@ -49,6 +49,31 @@ Write-Output "Installed version before: $before"
 $manager = 'none'
 $upgraded = $false
 
+# 0) Microsoft Office (Click-to-Run / Microsoft 365) is NOT patchable by winget or
+#    choco - it updates through Office's own updater. Detect it and drive that
+#    instead. The update runs in the BACKGROUND (async), so we can't confirm the
+#    new version synchronously - report 'triggered' and let a later sync confirm.
+$c2r = Join-Path ${env:ProgramFiles} 'Common Files\Microsoft Shared\ClickToRun\OfficeC2RClient.exe'
+if (($pkg -match '(?i)click.?to.?run|microsoft 365') -and (Test-Path $c2r)) {
+    Write-Output 'Microsoft Office Click-to-Run detected - updating via OfficeC2RClient (winget/choco cannot patch Office).'
+    try {
+        & $c2r /update user updatepromptuser=false forceappshutdown=false displaylevel=false
+        $manager = 'office-c2r'
+        Write-Output 'Office update TRIGGERED. It downloads and applies in the BACKGROUND (often 10+ minutes, and open Office apps may need to close), so the version will not change right away. It will clear on a later sync once it completes.'
+    } catch {
+        Write-Output ('ERROR triggering Office update: ' + $_.Exception.Message)
+    }
+    Start-Sleep -Seconds 2
+    $after = Get-InstalledVersion $pkg
+    $status = if ($after -and $before -and ($after -ne $before)) { 'upgraded' } else { 'triggered' }
+    Write-Output "Installed version after: $after"
+    Write-Output "RESULT: manager=$manager status=$status (Office update is asynchronous - verify after it finishes)."
+    Write-Output "RECON_STATUS $status"
+    Write-Output "RECON_MANAGER $manager"
+    Write-Output "RECON_NEWVERSION $after"
+    exit 0
+}
+
 # 2) Try winget (resolve winget.exe - not on PATH under SYSTEM).
 $winget = $null
 $resolved = Get-Command winget.exe -ErrorAction SilentlyContinue
