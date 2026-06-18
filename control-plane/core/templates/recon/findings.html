@@ -39,12 +39,17 @@
     font-size:12.5px}
   .dev .dn{font-family:var(--mono); color:var(--text); min-width:120px}
   .dev .dn a{color:var(--text); text-decoration:none} .dev .dn a:hover{color:var(--p3)}
-  .dev .dv{color:var(--dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .dev .dv{color:var(--dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer}
+  .dev .dv:hover{color:var(--text)}
+  .dev .dv.exp{white-space:normal; overflow:visible; color:var(--text)}
   .dev .dc{font-family:var(--mono); font-size:10px; color:var(--faint)}
   .remed{background:none; border:1px solid var(--ok); color:var(--ok); font-size:11px;
     border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; transition:.12s}
   .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
-  .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
+  .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint); max-width:340px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .rst.exp{white-space:normal; overflow:visible; max-width:none}
+  .rst[data-full]{cursor:pointer}
   .dismiss{background:none; border:1px solid var(--line); color:var(--dim); font-size:11px;
     border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; transition:.12s}
   .dismiss:hover{border-color:var(--dim); color:var(--text)} .dismiss:disabled{opacity:.5; cursor:default}
@@ -100,7 +105,7 @@
       {% for f in r.affected %}
       <div class="dev">
         <span class="dn"><a href="{% url 'asset_audit' f.tenant.slug f.asset.id %}">{{ f.asset.name }}</a></span>
-        <span class="dv">{% if not tenant %}{{ f.tenant.name }} · {% endif %}{{ f.match_reason|default:f.title }}</span>
+        <span class="dv" title="{{ f.match_reason|default:f.title }}">{% if not tenant %}{{ f.tenant.name }} · {% endif %}{{ f.match_reason|default:f.title }}</span>
         {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
         <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
         {% endif %}
@@ -143,7 +148,11 @@
         const s = await (await fetch("{% url 'remediate_status' %}?action="+d.action_id)).json();
         note.textContent = ' '+s.status;
         if(['done','failed','blocked','timeout'].includes(s.status)){ clearInterval(t);
-          note.textContent = ' '+s.status+(s.output? ' — '+s.output.slice(0,80):''); }
+          const full = s.status + (s.output? ' — '+s.output : '');
+          note.dataset.full = full;
+          note.title = full;
+          note.textContent = ' '+full;
+        }
       }, 2500);
     });
   });
@@ -166,6 +175,14 @@
       if(!r.ok){ btn.textContent=(d.error||'failed'); btn.disabled=false; return; }
       location.reload();
     });
+  });
+
+  // Click a cut-off description or remediation output to expand it (hover shows
+  // the full text via the title tooltip as well).
+  document.addEventListener('click', (e)=>{
+    if(e.target.tagName === 'A' || e.target.tagName === 'BUTTON') return;
+    const el = e.target.closest('.dev .dv, .rst');
+    if(el) el.classList.toggle('exp');
   });
 })();
 </script>
