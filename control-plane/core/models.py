@@ -79,6 +79,17 @@ class Product(models.Model):
         max_length=50, blank=True,
         help_text="Where this inventory row came from: trmm, action1, manual, wazuh.",
     )
+    # Capability probe (winget/choco) results — the *fix path*, separate from
+    # whether the product is vulnerable. Lets the UI say up front whether Recon
+    # can patch it, instead of finding out by a failed remediation.
+    class Fix(models.TextChoices):
+        UNKNOWN = "unknown", "Not yet probed"
+        WINGET = "winget", "winget"
+        CHOCO = "choco", "Chocolatey"
+        NONE = "none", "No package-manager fix"
+    fix_source = models.CharField(max_length=10, choices=Fix.choices, default=Fix.UNKNOWN)
+    fix_version = models.CharField(max_length=100, blank=True)  # available upgrade version
+    probed_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         v = f" {self.version}" if self.version else ""

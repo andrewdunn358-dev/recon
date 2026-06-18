@@ -167,6 +167,7 @@ def watch_loop():
     from collections import defaultdict
     from .models import Product, CVE, Finding, CveProductToken, Suppression
     from .matching import candidate_tokens, normalise
+    from .integrations import trmm
 
     # Phase 1 — match each UNIQUE piece of software once.
     # 27k installed products collapse to a few thousand distinct (name,version)s,
@@ -284,6 +285,11 @@ def watch_loop():
               flush=True)
 
     notify_new_findings.delay()
+    # The scan is done — kick off the estate-wide capability probe so each finding
+    # learns its fix path (winget/choco/manual). Guarded internally so frequent
+    # watch_loop ticks don't re-probe constantly.
+    if trmm.probe_script_id():
+        probe_patchability.delay()
     return (f"watch_loop: {raised} new, {refreshed} refreshed, "
             f"{suppressed} suppressed, {swept} swept")
 
@@ -1048,6 +1054,125 @@ def _apply_remediation_report(act, output: str):
     Finding.objects.filter(product=product, source="watch").update(auto_update_failed_at=None)
     act.output = (act.output + f"\n\n[Recon] device now reports {product.name} "
                   f"{new_version}; cleared {cleared} finding(s) no longer in range.")[:5000]
+
+
+def _parse_probe_output(output: str):
+    """Pull the JSON list the probe script prints between its markers."""
+    import json, re
+    m = re.search(r"RECON_PROBE_BEGIN\s*(.*?)\s*RECON_PROBE_END", output or "", re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    return data if isinstance(data, list) else []
+
+
+def _index_probe(entries):
+    """Index probe rows by normalised name (and the winget_query-cleaned name) so
+    products can be looked up against them."""
+    from .matching import normalise
+    from .integrations import trmm
+    idx = {}
+    for e in entries:
+        nm = normalise(e.get("name", ""))
+        if nm:
+            idx.setdefault(nm, e)
+        cl = normalise(trmm.winget_query(e.get("name", "")))
+        if cl:
+            idx.setdefault(cl, e)
+    return idx
+
+
+def _match_probe_entry(product, idx):
+    """Find the probe row that corresponds to an installed product. Exact normalised
+    match first, then a conservative prefix match (winget names are usually the
+    longer, more-specific string), so 'Mozilla Firefox' matches 'Mozilla Firefox
+    (x64 en-US)' without labelling unrelated software patchable."""
+    from .matching import normalise
+    from .integrations import trmm
+    keys = {normalise(product.name), normalise(trmm.winget_query(product.name))}
+    keys.discard("")
+    for k in keys:
+        if k in idx:
+            return idx[k]
+    for pk, e in idx.items():
+        for k in keys:
+            if len(k) >= 5 and (pk.startswith(k) or k.startswith(pk)):
+                return e
+    return None
+
+
+@shared_task
+def probe_patchability(only_online=True, force=False, min_interval_hours=2):
+    """Estate-wide capability probe. Ask each device's winget/choco what it can
+    actually upgrade and record the *fix path* per product (winget / choco / none)
+    plus the available version — so Recon can tell you up front whether it can
+    patch something, instead of finding out via a failed remediation. Read-only;
+    upgrades nothing. Patchability is separate from vulnerability — this never
+    hides a finding, it only labels how it would be fixed."""
+    import time
+    from datetime import timedelta
+    from .models import Asset, Product
+    from .integrations import trmm
+
+    sid = trmm.probe_script_id()
+    if not sid:
+        print("probe_patchability: TRMM_PROBE_SCRIPT_ID not set — skipping.")
+        return {"skipped": "no script id"}
+
+    if not force:
+        last = (Product.objects.filter(probed_at__isnull=False)
+                .order_by("-probed_at").values_list("probed_at", flat=True).first())
+        if last and timezone.now() - last < timedelta(hours=min_interval_hours):
+            print(f"probe_patchability: probed at {last:%H:%M} (< {min_interval_hours}h ago) "
+                  f"— skipping. Use force=True to override.", flush=True)
+            return {"skipped": "recent"}
+
+    assets = Asset.objects.exclude(tactical_rmm_agent_id="")
+    if only_online:
+        assets = assets.filter(status="online")
+    assets = list(assets)
+    t0 = time.monotonic()
+    print(f"probe_patchability: probing {len(assets)} device(s) via winget/choco…", flush=True)
+    probed = errors = labelled = 0
+    for i, a in enumerate(assets, 1):
+        d0 = time.monotonic()
+        try:
+            res = trmm.run_script(a.tactical_rmm_agent_id, args=[], timeout=120, script_id=sid)
+            out = res.get("result")
+            out = out if isinstance(out, str) else str(out)
+            entries = _parse_probe_output(out)
+        except Exception as e:  # offline / timeout / parse — leave this device's products as-is
+            errors += 1
+            print(f"  [{i}/{len(assets)}] {a.name}: probe failed ({e})", flush=True)
+            continue
+        idx = _index_probe(entries)
+        n_dev = 0
+        for p in a.products.all():
+            match = _match_probe_entry(p, idx)
+            if match:
+                src = "choco" if str(match.get("source", "")).lower().startswith("choco") else "winget"
+                p.fix_source = src
+                p.fix_version = (match.get("available") or "")[:100]
+                labelled += 1
+                n_dev += 1
+            else:
+                p.fix_source = "none"
+                p.fix_version = ""
+            p.probed_at = timezone.now()
+            p.save(update_fields=["fix_source", "fix_version", "probed_at"])
+        probed += 1
+        print(f"  [{i}/{len(assets)}] {a.name}: {len(entries)} upgradable, "
+              f"{n_dev} matched, {time.monotonic() - d0:.1f}s", flush=True)
+    dt = time.monotonic() - t0
+    print(f"probe_patchability: done — {probed} probed, {errors} errors, "
+          f"{labelled} products patchable, {dt:.1f}s total "
+          f"({dt / max(probed, 1):.1f}s/device).", flush=True)
+    return {"probed": probed, "errors": errors, "labelled": labelled, "seconds": round(dt, 1)}
 
 
 @shared_task

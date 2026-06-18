@@ -85,20 +85,29 @@ def normalise_software(sw: dict) -> dict:
 # id and runs `winget upgrade <id>`), then point Recon at it:
 #   REMEDIATION_ENABLED=true            # master off-switch (default off)
 #   TRMM_REMEDIATE_SCRIPT_ID=<pk>       # the saved script's id in TRMM
+#   TRMM_PROBE_SCRIPT_ID=<pk>           # saved "Recon Probe" script (winget/choco
+#                                       # capability probe; read-only). Optional —
+#                                       # without it the estate probe is skipped.
 # Endpoint shape can vary by TRMM version — verify on your box before enabling.
 
 def remediation_enabled() -> bool:
     return os.environ.get("REMEDIATION_ENABLED", "false").lower() in ("1", "true", "yes")
 
 
-def run_script(agent_id: str, args=None, timeout: int = 120) -> dict:
-    """Trigger the configured remediation script on one agent and wait for output."""
+def probe_script_id() -> str:
+    """The saved TRMM script id for the capability probe (winget/choco), if set."""
+    return os.environ.get("TRMM_PROBE_SCRIPT_ID", "")
+
+
+def run_script(agent_id: str, args=None, timeout: int = 120, script_id=None) -> dict:
+    """Trigger a saved TRMM script on one agent and wait for output. Defaults to the
+    remediation script; pass script_id to run another (e.g. the capability probe)."""
     import requests
     url, key = _cfg()
-    script_id = os.environ.get("TRMM_REMEDIATE_SCRIPT_ID", "")
-    if not script_id:
+    sid = str(script_id) if script_id not in (None, "") else os.environ.get("TRMM_REMEDIATE_SCRIPT_ID", "")
+    if not sid:
         raise TRMMError("Set TRMM_REMEDIATE_SCRIPT_ID to the saved TRMM script's id.")
-    body = {"script": int(script_id), "args": args or [], "env_vars": [],
+    body = {"script": int(sid), "args": args or [], "env_vars": [],
             "output": "wait", "timeout": timeout, "run_as_user": False}
     r = requests.post(
         f"{url}/agents/{agent_id}/runscript/",
@@ -112,7 +121,7 @@ def run_script(agent_id: str, args=None, timeout: int = 120) -> dict:
         snippet = detail[:600] if detail else "(empty response body)"
         raise TRMMError(
             f"TRMM returned HTTP {r.status_code} for runscript on agent "
-            f"{agent_id} (script id {script_id}). Response: {snippet}")
+            f"{agent_id} (script id {sid}). Response: {snippet}")
     try:
         return {"ok": True, "result": r.json()}
     except ValueError:

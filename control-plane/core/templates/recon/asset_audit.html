@@ -50,6 +50,9 @@
   .verdict{margin-top:14px; font-size:13px; color:var(--text); line-height:1.55}
   .aufail{margin-top:12px; font-size:12.5px; line-height:1.5; color:var(--p2);
     border:1px solid var(--p2); border-radius:8px; padding:9px 12px; background:rgba(0,0,0,.12)}
+  .fixchip{font-family:var(--mono); font-size:10px; border-radius:5px; padding:2px 7px; white-space:nowrap; cursor:help; margin-right:8px}
+  .fixchip.ok{color:var(--ok); border:1px solid var(--ok)}
+  .fixchip.man{color:var(--faint); border:1px solid var(--line)}
   .verdict .vlab{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:block; margin-bottom:3px}
   .why{display:flex; flex-wrap:wrap; gap:6px; margin-top:11px}
   .why span{font-size:10.5px; color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-family:var(--mono)}
@@ -134,7 +137,8 @@
     {% if a.why %}<div class="why">{% for w in a.why %}<span>{{ w }}</span>{% endfor %}</div>{% endif %}
     <div class="cfoot">
       {% if a.nvd %}<a class="verify" href="{{ a.nvd }}" target="_blank" rel="noopener">Verify against NVD ↗</a>{% endif %}
-      {% if remediation_enabled and a.product and asset.tactical_rmm_agent_id %}
+      {% if a.product.fix_source == "winget" or a.product.fix_source == "choco" %}<span class="fixchip ok" title="The device's {{ a.product.get_fix_source_display }} reports an available upgrade — likely one-click.">{{ a.product.get_fix_source_display }}{% if a.product.fix_version %} → {{ a.product.fix_version }}{% endif %}</span>{% elif a.product.fix_source == "none" %}<span class="fixchip man" title="No package-manager upgrade found — needs a manual or vendor update.">manual update</span>{% endif %}
+      {% if remediation_enabled and a.product and asset.tactical_rmm_agent_id and a.product.fix_source != "none" %}
       <button class="remed" data-finding="{{ a.f.id }}" data-name="{{ asset.name }}" data-pkg="{{ a.product.name }}">Update via TRMM</button><span class="rst"></span>
       {% endif %}
       {% if a.cve %}

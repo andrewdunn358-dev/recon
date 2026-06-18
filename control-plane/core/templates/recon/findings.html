@@ -42,6 +42,9 @@
   .dev .dv{color:var(--dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer}
   .aufchip{font-family:var(--mono); font-size:10px; color:var(--p2); border:1px solid var(--p2);
     border-radius:5px; padding:1px 6px; white-space:nowrap; cursor:help}
+  .fixchip{font-family:var(--mono); font-size:10px; border-radius:5px; padding:1px 6px; white-space:nowrap; cursor:help}
+  .fixchip.ok{color:var(--ok); border:1px solid var(--ok)}
+  .fixchip.man{color:var(--faint); border:1px solid var(--line)}
   .dev .dv:hover{color:var(--text)}
   .dev .dv.exp{white-space:normal; overflow:visible; color:var(--text)}
   .dev .dc{font-family:var(--mono); font-size:10px; color:var(--faint)}
@@ -109,7 +112,8 @@
         <span class="dn"><a href="{% url 'asset_audit' f.tenant.slug f.asset.id %}">{{ f.asset.name }}</a></span>
         <span class="dv" title="{{ f.match_reason|default:f.title }}">{% if not tenant %}{{ f.tenant.name }} · {% endif %}{{ f.match_reason|default:f.title }}</span>
         {% if f.auto_update_failed_at %}<span class="aufchip" title="A Recon update ran on {{ f.auto_update_failed_at|date:'j M H:i' }} but the device reported the same version afterwards — this app can't be patched via winget/choco. Needs a manual/alternate update.">⚠ update didn't take</span>{% endif %}
-        {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
+        {% if f.product.fix_source == "winget" or f.product.fix_source == "choco" %}<span class="fixchip ok" title="The device's {{ f.product.get_fix_source_display }} reports an available upgrade — likely one-click.">{{ f.product.get_fix_source_display }}{% if f.product.fix_version %} → {{ f.product.fix_version }}{% endif %}</span>{% elif f.product.fix_source == "none" %}<span class="fixchip man" title="No package-manager upgrade found for this software — needs a manual or vendor update.">manual update</span>{% endif %}
+        {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id and f.product.fix_source != "none" %}
         <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
         {% endif %}
         <button class="dismiss" data-finding="{{ f.id }}" data-cve="{{ r.cve_id }}" data-pkg="{{ f.product.name|default:'' }}">Dismiss</button>
