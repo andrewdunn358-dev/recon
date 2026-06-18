@@ -357,6 +357,19 @@ def suppressions(request):
 
 
 @login_required
+def remediations(request):
+    """Audit log of every remediation Recon has pushed via TRMM — device, package,
+    status, who ran it, when, and the full output returned by the agent. This is
+    the authoritative record (TRMM's synchronous run-and-return API hands the
+    output back here, so it isn't in the agent's TRMM script history)."""
+    from django.core.paginator import Paginator
+    rows = (RemediationAction.objects.select_related("asset", "asset__tenant", "requested_by")
+            .order_by("-created_at"))
+    page = Paginator(rows, 50).get_page(request.GET.get("page"))
+    return render(request, "recon/remediations.html", {"page_obj": page})
+
+
+@login_required
 def scan_start(request):
     """Queue an ad-hoc assessment to the scan worker. §11 consent is required."""
     if request.method != "POST":

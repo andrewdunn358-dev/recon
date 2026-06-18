@@ -1,0 +1,65 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — Remediation log{% endblock %}
+{% block style %}
+  .wrap{max-width:1080px; margin:0 auto; padding:30px 28px 80px}
+  h1{font-family:var(--display); font-size:22px; margin:0 0 4px}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 22px}
+  .sub a{color:var(--p3); text-decoration:none}
+  .row{padding:12px 0; border-top:1px solid var(--line)}
+  .top{display:flex; align-items:center; gap:14px}
+  .dev{font-family:var(--mono); color:var(--text); min-width:140px}
+  .pkg{color:var(--text); flex:1}
+  .pkg .cl{color:var(--dim)}
+  .meta{font-family:var(--mono); font-size:10.5px; color:var(--faint); white-space:nowrap}
+  .st{font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:5px; border:1px solid var(--line)}
+  .st.done{color:var(--ok); border-color:var(--ok)}
+  .st.failed{color:var(--p1); border-color:var(--p1)}
+  .st.timeout{color:var(--p2); border-color:var(--p2)}
+  .st.blocked,.st.queued,.st.running{color:var(--dim)}
+  .out{margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--dim);
+    white-space:pre-wrap; max-height:0; overflow:hidden; transition:max-height .15s; background:var(--surface);
+    border-radius:6px}
+  .out.exp{max-height:600px; overflow:auto; padding:10px 12px}
+  .toggle{font-size:11px; color:var(--p3); cursor:pointer; user-select:none}
+  .empty{color:var(--faint); padding:30px 0}
+  .pager{display:flex; gap:16px; justify-content:center; margin-top:24px; font-size:12.5px}
+  .pager a{color:var(--p3); text-decoration:none}
+{% endblock %}
+{% block body %}
+<main class="wrap">
+  <h1>Remediation log</h1>
+  <p class="sub">Every fix Recon has pushed via TRMM, with the agent's full output. The authoritative record. · <a href="{% url 'findings' %}">← Worklist</a></p>
+
+  {% for r in page_obj %}
+  <div class="row">
+    <div class="top">
+      <span class="dev">{{ r.asset.name }}</span>
+      <span class="pkg">{{ r.target_ref|default:r.kind }}{% if r.asset.tenant %} <span class="cl">· {{ r.asset.tenant.name }}</span>{% endif %}</span>
+      <span class="st {{ r.status }}">{{ r.get_status_display }}</span>
+      <span class="meta">{{ r.requested_by.username|default:"—" }} · {{ r.created_at|date:"j M Y, H:i" }}</span>
+    </div>
+    {% if r.output %}<div class="toggle" data-row="{{ r.id }}">output ▾</div><div class="out" id="out-{{ r.id }}">{{ r.output }}</div>{% endif %}
+  </div>
+  {% empty %}
+  <p class="empty">No remediations pushed yet.</p>
+  {% endfor %}
+
+  {% if page_obj.paginator.num_pages > 1 %}
+  <div class="pager">
+    {% if page_obj.has_previous %}<a href="?page={{ page_obj.previous_page_number }}">← Prev</a>{% endif %}
+    <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}<a href="?page={{ page_obj.next_page_number }}">Next →</a>{% endif %}
+  </div>
+  {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('.toggle').forEach(t=>{
+  t.addEventListener('click', ()=>{
+    const o = document.getElementById('out-'+t.dataset.row);
+    if(o){ o.classList.toggle('exp'); t.textContent = o.classList.contains('exp') ? 'output ▴' : 'output ▾'; }
+  });
+});
+</script>
+{% endblock %}
