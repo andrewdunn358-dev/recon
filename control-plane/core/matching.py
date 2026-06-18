@@ -289,11 +289,19 @@ def match_product_to_cve(product, cve) -> Match | None:
             if r is None:
                 any_inconclusive = True
         if matched_range is not None and vendor_ok:
-            who = (aff.get("product") or "this software").strip()
+            installed = (product.name or "this software").strip()
+            aff_name = (aff.get("product") or "").strip()
+            # Name what's ACTUALLY on the device, not the advisory's product name —
+            # and when the advisory calls it something different (shared vendor /
+            # category word, e.g. installed 'Web Components' vs advisory 'Sophos Web
+            # Appliance'), say so, so a coincidental match is obvious to verify.
+            extra = ""
+            if aff_name and normalise(aff_name) != normalise(installed):
+                extra = f", matched against the advisory's \u201c{aff_name}\u201d"
             return Match(
                 "medium",
-                f"This device runs {who} {product.version}, which is in the "
-                f"affected range ({_describe_range(matched_range)}) for this CVE.",
+                f"This device runs {installed} {product.version}, which is in the "
+                f"affected range ({_describe_range(matched_range)}){extra} for this CVE.",
             )
 
         # 3) product name matched but the version was NOT confirmed in range.
