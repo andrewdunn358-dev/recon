@@ -25,14 +25,22 @@ from .prioritise import prioritise
 
 
 def _suppression_sets():
-    """Build the dismissal skip-sets once: whole-CVE suppressions and
-    (cve_id, normalised-product-name) pairs. Used by every path that writes
-    findings so a dismissal can never be resurrected by any matcher run."""
+    """Build the dismissal skip-sets once. Three scopes:
+      sup_cve  — whole-CVE dismissals (any product on that CVE)
+      sup_prod — whole-product dismissals (a product across ALL CVEs)
+      sup_pair — (cve_id, normalised-product-name) — this product on this CVE
+    Used by every path that writes findings so a dismissal can never be
+    resurrected by any matcher run."""
     from .models import Suppression
-    sup_cve, sup_pair = set(), set()
+    sup_cve, sup_prod, sup_pair = set(), set(), set()
     for cid, pkey in Suppression.objects.values_list("cve_id", "product_key"):
-        (sup_cve if not pkey else sup_pair).add(cid if not pkey else (cid, pkey))
-    return sup_cve, sup_pair
+        if not pkey:
+            sup_cve.add(cid)
+        elif not cid:
+            sup_prod.add(pkey)
+        else:
+            sup_pair.add((cid, pkey))
+    return sup_cve, sup_prod, sup_pair
 
 
 def _upsert_asset_software(asset, software_rows) -> int:
@@ -227,7 +235,7 @@ def watch_loop():
     # Honour the dismissal register: whole-CVE suppressions, and per-(CVE,product)
     # ones keyed on the normalised product name, are skipped so verified false
     # positives stay gone across re-syncs.
-    sup_cve, sup_pair = _suppression_sets()
+    sup_cve, sup_prod, sup_pair = _suppression_sets()
     raised = refreshed = suppressed = 0
     run_start = timezone.now()  # anything not refreshed at/after this no longer matches
     products = Product.objects.select_related("asset", "asset__tenant")
@@ -237,7 +245,7 @@ def watch_loop():
         pkey = normalise(product.name)
         for cve_id, confidence, reason in cache.get(
                 (product.name, product.version, product.vendor, product.cpe), ()):
-            if cve_id in sup_cve or (cve_id, pkey) in sup_pair:
+            if cve_id in sup_cve or pkey in sup_prod or (cve_id, pkey) in sup_pair:
                 suppressed += 1
                 continue
             cve = cve_by_id.get(cve_id)
@@ -775,7 +783,7 @@ def assess_client(job_id: int):
         # Phase 1 — CVE match across the whole client (passive, always allowed).
         upd(phase=f"Matching {len(assets)} device(s) against the CVE corpus…",
             total=len(assets), progress=0)
-        sup_cve, sup_pair = _suppression_sets()
+        sup_cve, sup_prod, sup_pair = _suppression_sets()
         run_start = timezone.now()
         cve_matches = 0
         for i, asset in enumerate(assets, 1):
@@ -787,7 +795,7 @@ def assess_client(job_id: int):
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
                         .values_list("cve_id", flat=True).distinct())
                 for cve in CVE.objects.filter(cve_id__in=list(cand)):
-                    if cve.cve_id in sup_cve or (cve.cve_id, pkey) in sup_pair:
+                    if cve.cve_id in sup_cve or pkey in sup_prod or (cve.cve_id, pkey) in sup_pair:
                         continue  # dismissed — never resurrect
                     m = match_product_to_cve(product, cve)
                     if not m:
@@ -889,7 +897,7 @@ def assess_asset(job_id: int, asset_id: int, refresh: bool = False):
         upd(phase=f"Matching {len(products)} package(s) on {asset.name} against the CVE corpus…",
             total=len(products), progress=0)
 
-        sup_cve, sup_pair = _suppression_sets()
+        sup_cve, sup_prod, sup_pair = _suppression_sets()
         run_start = timezone.now()
         cve_matches = 0
         for i, product in enumerate(products, 1):
@@ -899,7 +907,7 @@ def assess_asset(job_id: int, asset_id: int, refresh: bool = False):
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
                         .values_list("cve_id", flat=True).distinct())
                 for cve in CVE.objects.filter(cve_id__in=list(cand)):
-                    if cve.cve_id in sup_cve or (cve.cve_id, pkey) in sup_pair:
+                    if cve.cve_id in sup_cve or pkey in sup_prod or (cve.cve_id, pkey) in sup_pair:
                         continue  # dismissed — never resurrect
                     m = match_product_to_cve(product, cve)
                     if not m:
@@ -1014,7 +1022,17 @@ def _apply_remediation_report(act, output: str):
         return
     m = re.search(r"^RECON_NEWVERSION (.+)$", output, re.M)
     new_version = (m.group(1).strip() if m else "")
-    if not new_version or new_version == product.version:
+    if not new_version:
+        return
+    if new_version == product.version:
+        # The manager claimed success but the registry version didn't move — this
+        # app can't be patched this way (e.g. Adobe-updater-managed). Flag its
+        # findings so they don't look like they were simply never attempted.
+        n = Finding.objects.filter(product=product, source="watch").update(
+            auto_update_failed_at=timezone.now())
+        act.output = (act.output + f"\n\n[Recon] {product.name} still reports "
+                      f"{new_version} after the update — auto-update did not take. "
+                      f"Flagged {n} finding(s) as needing a manual/alternate update.")[:5000]
         return
     product.version = new_version
     product.save(update_fields=["version"])
@@ -1025,6 +1043,9 @@ def _apply_remediation_report(act, output: str):
         if f.cve and not match_product_to_cve(product, f.cve):
             f.delete()
             cleared += 1
+    # Survivors moved with the version, so the earlier "couldn't update" flag (if any)
+    # no longer applies.
+    Finding.objects.filter(product=product, source="watch").update(auto_update_failed_at=None)
     act.output = (act.output + f"\n\n[Recon] device now reports {product.name} "
                   f"{new_version}; cleared {cleared} finding(s) no longer in range.")[:5000]
 

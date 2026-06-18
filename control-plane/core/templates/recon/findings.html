@@ -40,6 +40,8 @@
   .dev .dn{font-family:var(--mono); color:var(--text); min-width:120px}
   .dev .dn a{color:var(--text); text-decoration:none} .dev .dn a:hover{color:var(--p3)}
   .dev .dv{color:var(--dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer}
+  .aufchip{font-family:var(--mono); font-size:10px; color:var(--p2); border:1px solid var(--p2);
+    border-radius:5px; padding:1px 6px; white-space:nowrap; cursor:help}
   .dev .dv:hover{color:var(--text)}
   .dev .dv.exp{white-space:normal; overflow:visible; color:var(--text)}
   .dev .dc{font-family:var(--mono); font-size:10px; color:var(--faint)}
@@ -106,6 +108,7 @@
       <div class="dev">
         <span class="dn"><a href="{% url 'asset_audit' f.tenant.slug f.asset.id %}">{{ f.asset.name }}</a></span>
         <span class="dv" title="{{ f.match_reason|default:f.title }}">{% if not tenant %}{{ f.tenant.name }} · {% endif %}{{ f.match_reason|default:f.title }}</span>
+        {% if f.auto_update_failed_at %}<span class="aufchip" title="A Recon update ran on {{ f.auto_update_failed_at|date:'j M H:i' }} but the device reported the same version afterwards — this app can't be patched via winget/choco. Needs a manual/alternate update.">⚠ update didn't take</span>{% endif %}
         {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
         <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
         {% endif %}

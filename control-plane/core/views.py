@@ -335,6 +335,25 @@ def suppress_start(request, finding_id):
     reason = (request.POST.get("reason") or "")[:300]
     cve_id = finding.cve_id
 
+    # Whole-product dismissal: this software across ALL CVEs. For component/
+    # resource entries (language packs, dictionary support, MUI) that keep
+    # matching their parent product's advisories on a version that isn't even
+    # the product's own. cve_id is left blank => matched by product_key alone.
+    if scope == "product_all":
+        if not finding.product:
+            return JsonResponse({"error": "No product on this finding to scope to."}, status=400)
+        pkey = normalise(finding.product.name)
+        plabel = finding.product.name[:200]
+        sup, _ = Suppression.objects.get_or_create(
+            cve_id="", product_key=pkey,
+            defaults={"product_label": plabel, "reason": reason,
+                      "created_by": request.user if request.user.is_authenticated else None})
+        prod_ids = [p.id for p in Product.objects.only("id", "name").iterator()
+                    if normalise(p.name) == pkey]
+        removed, _ = Finding.objects.filter(product_id__in=prod_ids).delete()
+        return JsonResponse({"ok": True, "suppression_id": sup.id, "removed": removed,
+                             "scope": "product_all"})
+
     if scope == "cve":
         pkey, plabel = "", ""
     else:

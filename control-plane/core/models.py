@@ -183,6 +183,10 @@ class Finding(models.Model):
 
     first_seen = models.DateTimeField(default=timezone.now)
     last_seen = models.DateTimeField(default=timezone.now)
+    # Set when a Recon remediation ran but the device's registry version didn't
+    # move (winget/choco claimed success but no-op'd — e.g. Adobe-updater-managed
+    # apps). Lets the UI flag these so they don't masquerade as simply pending.
+    auto_update_failed_at = models.DateTimeField(null=True, blank=True)
     notified = models.BooleanField(default=False)
     # Set when a finding came from a dashboard-triggered scan, so the panel can
     # stream this run's findings live.

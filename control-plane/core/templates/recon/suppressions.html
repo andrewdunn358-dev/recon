@@ -7,6 +7,7 @@
   .sub a{color:var(--p3); text-decoration:none}
   .row{display:flex; align-items:center; gap:14px; padding:11px 0; border-top:1px solid var(--line)}
   .cve{font-family:var(--mono); color:var(--text); min-width:150px}
+  .allcve{font-family:var(--mono); color:var(--faint); font-size:11px; border:1px solid var(--line); border-radius:5px; padding:1px 7px}
   .cve a{color:var(--text); text-decoration:none} .cve a:hover{color:var(--p3)}
   .scope{color:var(--dim); flex:1}
   .scope .rsn{color:var(--faint); font-style:italic}
@@ -23,7 +24,7 @@
 
   {% for s in rows %}
   <div class="row" id="sup-{{ s.id }}">
-    <span class="cve"><a href="https://nvd.nist.gov/vuln/detail/{{ s.cve_id }}" target="_blank" rel="noopener">{{ s.cve_id }} ↗</a></span>
+    <span class="cve">{% if s.cve_id %}<a href="https://nvd.nist.gov/vuln/detail/{{ s.cve_id }}" target="_blank" rel="noopener">{{ s.cve_id }} ↗</a>{% else %}<span class="allcve">all CVEs</span>{% endif %}</span>
     <span class="scope">{{ s.scope_label }}{% if s.reason %} — <span class="rsn">{{ s.reason }}</span>{% endif %}</span>
     <span class="meta">{{ s.created_by.username|default:"—" }} · {{ s.created_at|date:"j M Y" }}</span>
     <button class="undo" data-sup="{{ s.id }}">Undo</button>

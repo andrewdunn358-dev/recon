@@ -48,6 +48,8 @@
   .rv.in .rdot,.in>.rdot{background:var(--p2)}
 
   .verdict{margin-top:14px; font-size:13px; color:var(--text); line-height:1.55}
+  .aufail{margin-top:12px; font-size:12.5px; line-height:1.5; color:var(--p2);
+    border:1px solid var(--p2); border-radius:8px; padding:9px 12px; background:rgba(0,0,0,.12)}
   .verdict .vlab{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:block; margin-bottom:3px}
   .why{display:flex; flex-wrap:wrap; gap:6px; margin-top:11px}
   .why span{font-size:10.5px; color:var(--dim); border:1px solid var(--line); border-radius:5px; padding:2px 8px; font-family:var(--mono)}
@@ -128,6 +130,7 @@
     </div>
 
     {% if a.f.match_reason %}<div class="verdict"><span class="vlab">Matcher's reasoning</span>{{ a.f.match_reason }}</div>{% endif %}
+    {% if a.f.auto_update_failed_at %}<div class="aufail">⚠ Auto-update didn't take — the device still reported the same version after a Recon update on {{ a.f.auto_update_failed_at|date:"j M H:i" }}. This app likely can't be patched via winget/choco (e.g. it's managed by its own updater); needs a manual or alternate update.</div>{% endif %}
     {% if a.why %}<div class="why">{% for w in a.why %}<span>{{ w }}</span>{% endfor %}</div>{% endif %}
     <div class="cfoot">
       {% if a.nvd %}<a class="verify" href="{{ a.nvd }}" target="_blank" rel="noopener">Verify against NVD ↗</a>{% endif %}
@@ -137,6 +140,7 @@
       {% if a.cve %}
       <span class="dismiss-grp">
         <button class="dismiss" data-finding="{{ a.f.id }}" data-scope="product" data-cve="{{ a.cve.cve_id }}" data-label="{{ a.product.name|default:'this software' }}">Dismiss for this software</button>
+        <button class="dismiss" data-finding="{{ a.f.id }}" data-scope="product_all" data-cve="{{ a.cve.cve_id }}" data-label="{{ a.product.name|default:'this software' }}">Dismiss this software everywhere</button>
         <button class="dismiss" data-finding="{{ a.f.id }}" data-scope="cve" data-cve="{{ a.cve.cve_id }}" data-label="">Dismiss CVE everywhere</button>
       </span>
       {% endif %}
@@ -156,6 +160,8 @@
       const id = btn.dataset.finding, scope = btn.dataset.scope, cve = btn.dataset.cve, label = btn.dataset.label;
       const msg = scope === 'cve'
         ? 'Dismiss '+cve+' everywhere?\n\nRemoves it from the worklist for ALL devices and software, across re-syncs, until undone.'
+        : scope === 'product_all'
+        ? 'Dismiss "'+label+'" across ALL CVEs?\n\nRemoves every finding for this software on every device — for a component/language pack that keeps matching its parent product. Across re-syncs, until undone.'
         : 'Dismiss "'+label+'" for '+cve+'?\n\nRemoves it for every device running this software, across re-syncs, until undone.';
       if(!confirm(msg)) return;
       const reason = prompt('Optional note — why is this not applicable?', '') || '';
@@ -167,7 +173,14 @@
       catch(e){ btn.textContent='network error'; btn.disabled=false; return; }
       const d = await r.json();
       if(!r.ok){ btn.textContent=(d.error||'failed'); btn.disabled=false; return; }
-      const card = btn.closest('.card'); if(card){ card.style.opacity=.4; btn.textContent='dismissed'; }
+      if(scope === 'product_all'){
+        document.querySelectorAll('.dismiss').forEach(b=>{
+          if(b.dataset.label === label){ const c=b.closest('.card'); if(c) c.style.opacity=.4; }
+        });
+        btn.textContent = 'dismissed everywhere ('+(d.removed||0)+')';
+      } else {
+        const card = btn.closest('.card'); if(card){ card.style.opacity=.4; btn.textContent='dismissed'; }
+      }
     });
   });
 
