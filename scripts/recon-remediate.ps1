@@ -60,7 +60,7 @@ else {
 }
 if ($winget) {
     Write-Output "Using winget: $winget"
-    $wargs = @('upgrade', '--name', $pkg, '--silent', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
+    $wargs = @('upgrade', '--name', $pkg, '--source', 'winget', '--silent', '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity')
     $out = & $winget @wargs 2>&1 | Out-String
     Write-Output $out
     $noMatch = 'No installed package found|No package found matching|No applicable (update|upgrade) found|No available upgrade'
@@ -116,8 +116,12 @@ Write-Output "Installed version after: $after"
 $status = 'notfound'
 if ($after) {
     if ($before -and ($after -ne $before)) { $status = 'upgraded' }
-    elseif ($upgraded) { $status = 'upgraded' }
     else { $status = 'nochange' }
+}
+if ($upgraded -and $status -eq 'nochange') {
+    Write-Output ("WARNING: a package manager reported success but the installed " +
+        "version did not change ('" + $before + "'). It likely matched the Microsoft " +
+        "Store listing or a different package, not the installed desktop app. NOT patched.")
 }
 Write-Output "RESULT: manager=$manager status=$status version '$before' -> '$after'. Verify in Recon."
 Write-Output "RECON_STATUS $status"
