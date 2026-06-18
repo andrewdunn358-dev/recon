@@ -35,6 +35,29 @@ def _suppression_sets():
     return sup_cve, sup_pair
 
 
+def _upsert_asset_software(asset, software_rows) -> int:
+    """Upsert one device's SynthOps software list into Product rows with stable
+    identity (update in place, drop what's gone), so findings aren't orphaned.
+    Shared by the full sync and the per-device re-check. Returns count seen."""
+    from .integrations import trmm
+    incoming = {}
+    for sw in software_rows or []:
+        row = trmm.normalise_software(sw)
+        if row["name"]:
+            incoming[row["name"]] = row  # last wins on duplicate names
+    for name, row in incoming.items():
+        obj = asset.products.filter(source="synthops", name=name).first()
+        if obj:
+            if obj.version != row.get("version", "") or obj.vendor != row.get("vendor", ""):
+                obj.version = row.get("version", "")
+                obj.vendor = row.get("vendor", "")
+                obj.save(update_fields=["version", "vendor"])
+        else:
+            asset.products.create(source="synthops", **row)
+    asset.products.filter(source="synthops").exclude(name__in=incoming).delete()
+    return len(incoming)
+
+
 @shared_task
 def update_cve_mirror():
     """
@@ -829,12 +852,16 @@ def assess_client(job_id: int):
 
 
 @shared_task
-def assess_asset(job_id: int, asset_id: int):
+def assess_asset(job_id: int, asset_id: int, refresh: bool = False):
     """
     Assess a single device. For an internal device this means matching its
     installed software against the CVE corpus (its real exposure — there's no
     per-device network address to scan). For an internet-facing device it also
     runs an active Nuclei scan of its target.
+
+    refresh=True re-pulls this device's software from SynthOps first, so the match
+    reflects the CURRENT inventory — used to verify a remediation actually moved
+    the version (a plain re-match would just re-confirm the stored, stale version).
     """
     from .models import ScanJob, Asset, CVE, Finding, CveProductToken
     from .matching import candidate_tokens, match_product_to_cve, normalise
@@ -850,6 +877,14 @@ def assess_asset(job_id: int, asset_id: int):
     try:
         asset = Asset.objects.get(pk=asset_id)
         tenant = asset.tenant
+        if refresh and asset.tactical_rmm_agent_id:
+            upd(phase=f"Re-pulling current inventory for {asset.name} from SynthOps…")
+            try:
+                from .integrations.synthops import SynthOps
+                so = SynthOps(); so.login()
+                _upsert_asset_software(asset, so.agent_software(asset.tactical_rmm_agent_id))
+            except Exception as e:  # noqa: BLE001
+                upd(phase=f"Inventory refresh failed ({e}); matching last-known inventory…")
         products = list(asset.products.all())
         upd(phase=f"Matching {len(products)} package(s) on {asset.name} against the CVE corpus…",
             total=len(products), progress=0)
@@ -953,12 +988,45 @@ def remediate_via_trmm(action_id: int):
             else:
                 act.output = str(result)[:5000]
                 act.status = RemediationAction.Status.DONE
+                _apply_remediation_report(act, str(result))
     except Exception as e:  # noqa: BLE001
         act.output = f"error: {e}"
         act.status = RemediationAction.Status.FAILED
     act.finished_at = timezone.now()
     act.save()
     return f"remediate[{action_id}]: {act.status}"
+
+
+def _apply_remediation_report(act, output: str):
+    """The remediation script reports the package's version straight after the
+    upgrade (RECON_NEWVERSION, from the registry — the same source as inventory).
+    If it moved, update that product's stored version now and clear any of its
+    findings that are no longer in range — so a fixed device drops off the worklist
+    immediately, without waiting for the next inventory cycle. (We trust the
+    device's own post-upgrade reading over the lagging SynthOps copy.)"""
+    import re
+    from .matching import match_product_to_cve
+    from .models import Finding
+
+    finding = getattr(act, "finding", None)
+    product = getattr(finding, "product", None) if finding else None
+    if not product:
+        return
+    m = re.search(r"^RECON_NEWVERSION (.+)$", output, re.M)
+    new_version = (m.group(1).strip() if m else "")
+    if not new_version or new_version == product.version:
+        return
+    product.version = new_version
+    product.save(update_fields=["version"])
+    # Re-evaluate every finding on this product against the new version; the ones
+    # that no longer match (i.e. the upgrade fixed them) are removed.
+    cleared = 0
+    for f in Finding.objects.filter(product=product, source="watch").select_related("cve"):
+        if f.cve and not match_product_to_cve(product, f.cve):
+            f.delete()
+            cleared += 1
+    act.output = (act.output + f"\n\n[Recon] device now reports {product.name} "
+                  f"{new_version}; cleared {cleared} finding(s) no longer in range.")[:5000]
 
 
 @shared_task
@@ -1107,23 +1175,7 @@ def sync_synthops(reset=False, match="inline"):
     # rather than delete+recreate — which would orphan findings (product set null)
     # and make the matcher pile up duplicate findings every run.
     for asset, agent_id in agent_jobs:
-        incoming = {}
-        for sw in software.get(agent_id, []):
-            row = trmm.normalise_software(sw)
-            if row["name"]:
-                incoming[row["name"]] = row  # last wins on duplicate names
-        for name, row in incoming.items():
-            obj = asset.products.filter(source="synthops", name=name).first()
-            if obj:
-                if obj.version != row.get("version", "") or obj.vendor != row.get("vendor", ""):
-                    obj.version = row.get("version", "")
-                    obj.vendor = row.get("vendor", "")
-                    obj.save(update_fields=["version", "vendor"])
-            else:
-                asset.products.create(source="synthops", **row)
-            n_products += 1
-        # drop software that's no longer installed
-        asset.products.filter(source="synthops").exclude(name__in=incoming).delete()
+        n_products += _upsert_asset_software(asset, software.get(agent_id, []))
 
     if match == "async":
         watch_loop.delay()

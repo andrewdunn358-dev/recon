@@ -262,7 +262,7 @@ def asset_scan_start(request, slug, asset_id):
         target=asset.name, tenant=tenant, do_nuclei=asset.internet_facing,
         created_by=request.user if request.user.is_authenticated else None,
     )
-    assess_asset.apply_async(args=[job.id, asset.id], queue="scan")
+    assess_asset.apply_async(args=[job.id, asset.id], kwargs={"refresh": True}, queue="scan")
     return JsonResponse({"job_id": job.id, "status": job.status})
 
 
