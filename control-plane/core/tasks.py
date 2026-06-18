@@ -24,6 +24,17 @@ from .matching import match_product_to_cve
 from .prioritise import prioritise
 
 
+def _suppression_sets():
+    """Build the dismissal skip-sets once: whole-CVE suppressions and
+    (cve_id, normalised-product-name) pairs. Used by every path that writes
+    findings so a dismissal can never be resurrected by any matcher run."""
+    from .models import Suppression
+    sup_cve, sup_pair = set(), set()
+    for cid, pkey in Suppression.objects.values_list("cve_id", "product_key"):
+        (sup_cve if not pkey else sup_pair).add(cid if not pkey else (cid, pkey))
+    return sup_cve, sup_pair
+
+
 @shared_task
 def update_cve_mirror():
     """
@@ -193,10 +204,9 @@ def watch_loop():
     # Honour the dismissal register: whole-CVE suppressions, and per-(CVE,product)
     # ones keyed on the normalised product name, are skipped so verified false
     # positives stay gone across re-syncs.
-    sup_cve, sup_pair = set(), set()
-    for cid, pkey in Suppression.objects.values_list("cve_id", "product_key"):
-        (sup_cve if not pkey else sup_pair).add(cid if not pkey else (cid, pkey))
+    sup_cve, sup_pair = _suppression_sets()
     raised = refreshed = suppressed = 0
+    run_start = timezone.now()  # anything not refreshed at/after this no longer matches
     products = Product.objects.select_related("asset", "asset__tenant")
     total = products.count()
     print(f"watch_loop: writing findings across {total} installed products…", flush=True)
@@ -226,8 +236,25 @@ def watch_loop():
             print(f"watch_loop: wrote {i}/{total} products — {raised} new, "
                   f"{refreshed} refreshed, {suppressed} suppressed…", flush=True)
 
+    # Sweep stale findings: any watch finding NOT refreshed this run no longer
+    # matches (the software was patched/removed, or it's now suppressed), so it
+    # must clear automatically — this is what makes a remediated box drop off the
+    # worklist on the next sync without a manual wipe.
+    # GUARD: only sweep if the matcher actually produced results. A run that wrote
+    # nothing (empty corpus/index, a crash mid-run) must NOT nuke the whole
+    # worklist — better to leave stale findings one more cycle than wipe valid ones.
+    swept = 0
+    if raised + refreshed > 0:
+        swept, _ = Finding.objects.filter(
+            source="watch", last_seen__lt=run_start).delete()
+        print(f"watch_loop: swept {swept} stale findings (no longer matching)", flush=True)
+    else:
+        print("watch_loop: wrote 0 findings — skipping stale sweep (safety guard)",
+              flush=True)
+
     notify_new_findings.delay()
-    return f"watch_loop: {raised} new, {refreshed} refreshed, {suppressed} suppressed"
+    return (f"watch_loop: {raised} new, {refreshed} refreshed, "
+            f"{suppressed} suppressed, {swept} swept")
 
 
 @shared_task
@@ -706,7 +733,7 @@ def assess_client(job_id: int):
          listed so they can be revisited when they come back up.
     """
     from .models import ScanJob, Asset, Product, CVE, Finding, CveProductToken
-    from .matching import candidate_tokens, match_product_to_cve
+    from .matching import candidate_tokens, match_product_to_cve, normalise
 
     job = ScanJob.objects.get(pk=job_id)
 
@@ -725,15 +752,20 @@ def assess_client(job_id: int):
         # Phase 1 — CVE match across the whole client (passive, always allowed).
         upd(phase=f"Matching {len(assets)} device(s) against the CVE corpus…",
             total=len(assets), progress=0)
+        sup_cve, sup_pair = _suppression_sets()
+        run_start = timezone.now()
         cve_matches = 0
         for i, asset in enumerate(assets, 1):
             for product in asset.products.all():
                 ptoks = candidate_tokens(product.name)
                 if not ptoks:
                     continue
+                pkey = normalise(product.name)
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
                         .values_list("cve_id", flat=True).distinct())
                 for cve in CVE.objects.filter(cve_id__in=list(cand)):
+                    if cve.cve_id in sup_cve or (cve.cve_id, pkey) in sup_pair:
+                        continue  # dismissed — never resurrect
                     m = match_product_to_cve(product, cve)
                     if not m:
                         continue
@@ -747,6 +779,10 @@ def assess_client(job_id: int):
             if i % 5 == 0 or i == len(assets):
                 upd(phase=f"Matching device {i}/{len(assets)} — {cve_matches} CVE finding(s)…",
                     progress=i)
+
+        # Clear this client's stale CVE findings (patched/removed/suppressed).
+        Finding.objects.filter(source="watch", tenant=tenant,
+                               last_seen__lt=run_start).delete()
 
         # Phase 2 — active scan of internet-facing, ONLINE hosts (gated by §11).
         nuclei_found = 0
@@ -801,7 +837,7 @@ def assess_asset(job_id: int, asset_id: int):
     runs an active Nuclei scan of its target.
     """
     from .models import ScanJob, Asset, CVE, Finding, CveProductToken
-    from .matching import candidate_tokens, match_product_to_cve
+    from .matching import candidate_tokens, match_product_to_cve, normalise
 
     job = ScanJob.objects.get(pk=job_id)
 
@@ -818,13 +854,18 @@ def assess_asset(job_id: int, asset_id: int):
         upd(phase=f"Matching {len(products)} package(s) on {asset.name} against the CVE corpus…",
             total=len(products), progress=0)
 
+        sup_cve, sup_pair = _suppression_sets()
+        run_start = timezone.now()
         cve_matches = 0
         for i, product in enumerate(products, 1):
             ptoks = candidate_tokens(product.name)
+            pkey = normalise(product.name)
             if ptoks:
                 cand = (CveProductToken.objects.filter(token__in=ptoks)
                         .values_list("cve_id", flat=True).distinct())
                 for cve in CVE.objects.filter(cve_id__in=list(cand)):
+                    if cve.cve_id in sup_cve or (cve.cve_id, pkey) in sup_pair:
+                        continue  # dismissed — never resurrect
                     m = match_product_to_cve(product, cve)
                     if not m:
                         continue
@@ -838,6 +879,12 @@ def assess_asset(job_id: int, asset_id: int):
             if i % 20 == 0 or i == len(products):
                 upd(phase=f"Matched {i}/{len(products)} package(s) — {cve_matches} CVE(s)…",
                     progress=i)
+
+        # Clear this device's stale CVE findings: any watch finding on this asset
+        # not refreshed this run no longer matches (patched/removed/suppressed), so
+        # re-assessing a remediated device drops the fixed findings off.
+        Finding.objects.filter(source="watch", asset=asset,
+                               last_seen__lt=run_start).delete()
 
         nuclei_found = 0
         if asset.internet_facing and asset.target and tenant.scanning_authorised:
