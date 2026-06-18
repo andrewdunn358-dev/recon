@@ -8,7 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, F
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
-from .models import Finding, ScanJob, Tenant, Asset, RemediationAction
+from .models import Finding, ScanJob, Tenant, Asset, RemediationAction, Suppression
 from .tasks import adhoc_assess, assess_client, assess_asset, remediate_via_trmm
 from .integrations import trmm
 
@@ -133,6 +133,7 @@ def findings(request):
         "total_findings": base.count(),
         "worklist_count": worklist_count,
         "sev_rows": sev_rows,
+        "suppression_count": Suppression.objects.count(),
     }
     return render(request, "recon/findings.html", ctx)
 
@@ -295,6 +296,63 @@ def remediate_status(request):
     except (RemediationAction.DoesNotExist, ValueError, TypeError):
         return JsonResponse({"error": "unknown action"}, status=404)
     return JsonResponse({"status": act.status, "output": act.output[:600]})
+
+
+@login_required
+def suppress_start(request, finding_id):
+    """Dismiss a verified false positive / accepted risk so it stays off the
+    worklist across re-syncs. scope=product dismisses this CVE for this software;
+    scope=cve dismisses the CVE everywhere. Existing matching findings are removed
+    immediately; future re-syncs skip them via the Suppression register."""
+    from .matching import normalise
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    finding = get_object_or_404(Finding, pk=finding_id)
+    if not finding.cve_id:
+        return JsonResponse({"error": "Only CVE findings can be dismissed here."}, status=400)
+    scope = (request.POST.get("scope") or "product").strip()
+    reason = (request.POST.get("reason") or "")[:300]
+    cve_id = finding.cve_id
+
+    if scope == "cve":
+        pkey, plabel = "", ""
+    else:
+        if not finding.product:
+            return JsonResponse({"error": "No product on this finding to scope to."}, status=400)
+        pkey = normalise(finding.product.name)
+        plabel = finding.product.name[:200]
+
+    sup, _ = Suppression.objects.get_or_create(
+        cve_id=cve_id, product_key=pkey,
+        defaults={"product_label": plabel, "reason": reason,
+                  "created_by": request.user if request.user.is_authenticated else None})
+
+    # Remove existing matching findings now.
+    qs = Finding.objects.filter(cve_id=cve_id)
+    if pkey:
+        ids = [f.id for f in qs.select_related("product")
+               if f.product and normalise(f.product.name) == pkey]
+        removed, _ = Finding.objects.filter(id__in=ids).delete()
+    else:
+        removed, _ = qs.delete()
+    return JsonResponse({"ok": True, "suppression_id": sup.id, "removed": removed})
+
+
+@login_required
+def unsuppress(request, sup_id):
+    """Undo a dismissal. The finding reappears on the next re-sync."""
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    Suppression.objects.filter(pk=sup_id).delete()
+    return JsonResponse({"ok": True})
+
+
+@login_required
+def suppressions(request):
+    """The dismissal register — review and undo verified false positives."""
+    rows = (Suppression.objects.select_related("created_by")
+            .order_by("-created_at"))
+    return render(request, "recon/suppressions.html", {"rows": rows})
 
 
 @login_required

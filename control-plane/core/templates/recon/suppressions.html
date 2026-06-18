@@ -1,0 +1,54 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — Dismissed{% endblock %}
+{% block style %}
+  .wrap{max-width:980px; margin:0 auto; padding:30px 28px 80px}
+  h1{font-family:var(--display); font-size:22px; margin:0 0 4px}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 22px}
+  .sub a{color:var(--p3); text-decoration:none}
+  .row{display:flex; align-items:center; gap:14px; padding:11px 0; border-top:1px solid var(--line)}
+  .cve{font-family:var(--mono); color:var(--text); min-width:150px}
+  .cve a{color:var(--text); text-decoration:none} .cve a:hover{color:var(--p3)}
+  .scope{color:var(--dim); flex:1}
+  .scope .rsn{color:var(--faint); font-style:italic}
+  .meta{font-family:var(--mono); font-size:10.5px; color:var(--faint); white-space:nowrap}
+  .undo{background:none; border:1px solid var(--line); color:var(--dim); font-size:11px;
+    border-radius:6px; padding:3px 10px; cursor:pointer; transition:.12s}
+  .undo:hover{border-color:var(--p3); color:var(--p3)} .undo:disabled{opacity:.5}
+  .empty{color:var(--faint); padding:30px 0}
+{% endblock %}
+{% block body %}
+<main class="wrap">
+  <h1>Dismissed</h1>
+  <p class="sub">Verified false positives and accepted risks. These stay off the worklist across re-syncs. Undo returns the finding on the next sync. · <a href="{% url 'findings' %}">← Worklist</a></p>
+
+  {% for s in rows %}
+  <div class="row" id="sup-{{ s.id }}">
+    <span class="cve"><a href="https://nvd.nist.gov/vuln/detail/{{ s.cve_id }}" target="_blank" rel="noopener">{{ s.cve_id }} ↗</a></span>
+    <span class="scope">{{ s.scope_label }}{% if s.reason %} — <span class="rsn">{{ s.reason }}</span>{% endif %}</span>
+    <span class="meta">{{ s.created_by.username|default:"—" }} · {{ s.created_at|date:"j M Y" }}</span>
+    <button class="undo" data-sup="{{ s.id }}">Undo</button>
+  </div>
+  {% empty %}
+  <p class="empty">Nothing dismissed yet. Use “Dismiss” on a finding you’ve verified is a false positive.</p>
+  {% endfor %}
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const csrf = "{{ csrf_token }}";
+  document.querySelectorAll('.undo').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Undo this dismissal? The finding will reappear on the next re-sync.')) return;
+      btn.disabled = true; btn.textContent = '…';
+      const url = "{% url 'unsuppress' 0 %}".replace(/0\//, btn.dataset.sup+'/');
+      let r;
+      try{ r = await fetch(url, {method:'POST', headers:{'X-CSRFToken':csrf}}); }
+      catch(e){ btn.textContent='error'; btn.disabled=false; return; }
+      if(!r.ok){ btn.textContent='failed'; btn.disabled=false; return; }
+      const el = document.getElementById('sup-'+btn.dataset.sup); if(el) el.remove();
+    });
+  });
+})();
+</script>
+{% endblock %}

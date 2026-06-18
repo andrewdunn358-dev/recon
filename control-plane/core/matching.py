@@ -74,7 +74,7 @@ STOPWORDS = {
     "plugin", "plugins", "extension", "extensions", "feature", "features",
     "helper", "assistant", "installation", "installer", "package", "packages",
     "pack", "based", "service", "services", "x64", "x86", "amd64", "arm64",
-    "bit", "kb", "based", "framework",
+    "bit", "kb", "based", "framework", "hub", "hubs", "tools", "toolkit",
 }
 
 # Platform qualifiers. If a CVE's affected product names one of these and the

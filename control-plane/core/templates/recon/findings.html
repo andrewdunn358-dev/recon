@@ -45,6 +45,9 @@
     border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; transition:.12s}
   .remed:hover{background:rgba(74,222,128,.1)} .remed:disabled{opacity:.5; cursor:default}
   .rst{font-family:var(--mono); font-size:10.5px; color:var(--faint)}
+  .dismiss{background:none; border:1px solid var(--line); color:var(--dim); font-size:11px;
+    border-radius:6px; padding:3px 9px; cursor:pointer; white-space:nowrap; transition:.12s}
+  .dismiss:hover{border-color:var(--dim); color:var(--text)} .dismiss:disabled{opacity:.5; cursor:default}
   .pager{display:flex; align-items:center; justify-content:center; gap:16px; margin-top:24px;
     font-size:13px; font-family:var(--mono); color:var(--dim)}
   .pager a{color:var(--p3); text-decoration:none; border:1px solid var(--line);
@@ -63,6 +66,7 @@
     <a class="chip {% if sev == code %}on{% endif %}" href="?sev={{ code|urlencode }}{% if client %}&client={{ client }}{% endif %}">{{ word }}<span class="c">{{ n }}</span></a>
     {% endfor %}
     <a class="chip {% if sev == 'all' %}on{% endif %}" href="?sev=all{% if client %}&client={{ client }}{% endif %}">All<span class="c">{{ total_cves }}</span></a>
+    {% if suppression_count %}<a class="chip" href="{% url 'suppressions' %}" style="margin-left:auto">Dismissed<span class="c">{{ suppression_count }}</span></a>{% endif %}
   </div>
 
   {% for r in rows %}
@@ -100,6 +104,7 @@
         {% if remediation_enabled and f.product and f.asset.tactical_rmm_agent_id %}
         <button class="remed" data-finding="{{ f.id }}" data-name="{{ f.asset.name }}" data-pkg="{{ f.product.name }}">Update via TRMM</button><span class="rst"></span>
         {% endif %}
+        <button class="dismiss" data-finding="{{ f.id }}" data-cve="{{ r.cve_id }}" data-pkg="{{ f.product.name|default:'' }}">Dismiss</button>
       </div>
       {% endfor %}
     </div>
@@ -140,6 +145,26 @@
         if(['done','failed','blocked','timeout'].includes(s.status)){ clearInterval(t);
           note.textContent = ' '+s.status+(s.output? ' — '+s.output.slice(0,80):''); }
       }, 2500);
+    });
+  });
+
+  document.querySelectorAll('.dismiss').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.finding, cve = btn.dataset.cve, pkg = btn.dataset.pkg;
+      const msg = pkg
+        ? 'Dismiss "'+pkg+'" for '+cve+' as not applicable?\n\nThis marks it a verified false positive / accepted risk and removes it from the worklist for every device running this software, across re-syncs, until you undo it from the Dismissed list.'
+        : 'Dismiss '+cve+' everywhere?';
+      if(!confirm(msg)) return;
+      const reason = prompt('Optional note — why is this not applicable? (e.g. "Windows tool, CVE is the Linux build")', '') || '';
+      btn.disabled = true; btn.textContent = 'dismissing…';
+      const url = "{% url 'suppress_start' 0 %}".replace(/0\/$/, id+'/');
+      const body = new URLSearchParams({scope:'product', reason:reason});
+      let r;
+      try{ r = await fetch(url, {method:'POST', headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}, body:body}); }
+      catch(e){ btn.textContent='network error'; btn.disabled=false; return; }
+      const d = await r.json();
+      if(!r.ok){ btn.textContent=(d.error||'failed'); btn.disabled=false; return; }
+      location.reload();
     });
   });
 })();

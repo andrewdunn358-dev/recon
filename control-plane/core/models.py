@@ -342,3 +342,36 @@ class RemediationAction(models.Model):
 
     def __str__(self):
         return f"{self.kind} {self.target_ref} on {self.asset} [{self.status}]"
+
+
+class Suppression(models.Model):
+    """A human-confirmed dismissal of a match — the false-positive / accepted-risk
+    register every real scanner needs. Some matches can't be auto-resolved by
+    name+version (e.g. CVE-2021-38647's 'Azure Stack Hub' is the Linux OMI build,
+    not the identically-named Windows tool), so once a person verifies a match is
+    bogus they dismiss it here and it stays off the worklist across re-syncs.
+
+    Scope: product_key blank => suppress the whole CVE everywhere; otherwise
+    suppress that CVE only for products whose name normalises to product_key.
+    """
+    cve_id = models.CharField(max_length=40, db_index=True)
+    # core.matching.normalise() of the product name; blank = all products.
+    product_key = models.CharField(max_length=200, blank=True, db_index=True)
+    # Human-readable product name at dismissal time, for the manage list.
+    product_label = models.CharField(max_length=200, blank=True)
+    reason = models.CharField(max_length=300, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = [("cve_id", "product_key")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        scope = self.product_label or self.product_key or "whole CVE"
+        return f"suppress {self.cve_id} ({scope})"
+
+    @property
+    def scope_label(self):
+        return self.product_label or self.product_key or "all products"

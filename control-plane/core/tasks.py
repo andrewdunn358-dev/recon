@@ -123,8 +123,8 @@ def watch_loop():
     """
     from types import SimpleNamespace
     from collections import defaultdict
-    from .models import Product, CVE, Finding, CveProductToken
-    from .matching import candidate_tokens
+    from .models import Product, CVE, Finding, CveProductToken, Suppression
+    from .matching import candidate_tokens, normalise
 
     # Phase 1 — match each UNIQUE piece of software once.
     # 27k installed products collapse to a few thousand distinct (name,version)s,
@@ -190,13 +190,23 @@ def watch_loop():
                 print(f"watch_loop: matched {done}/{len(uniques)} unique items…", flush=True)
 
     # Phase 2 — write findings per device from the cache (writes only).
-    raised = refreshed = 0
+    # Honour the dismissal register: whole-CVE suppressions, and per-(CVE,product)
+    # ones keyed on the normalised product name, are skipped so verified false
+    # positives stay gone across re-syncs.
+    sup_cve, sup_pair = set(), set()
+    for cid, pkey in Suppression.objects.values_list("cve_id", "product_key"):
+        (sup_cve if not pkey else sup_pair).add(cid if not pkey else (cid, pkey))
+    raised = refreshed = suppressed = 0
     products = Product.objects.select_related("asset", "asset__tenant")
     total = products.count()
     print(f"watch_loop: writing findings across {total} installed products…", flush=True)
     for i, product in enumerate(products.iterator(chunk_size=1000), 1):
+        pkey = normalise(product.name)
         for cve_id, confidence, reason in cache.get(
                 (product.name, product.version, product.vendor, product.cpe), ()):
+            if cve_id in sup_cve or (cve_id, pkey) in sup_pair:
+                suppressed += 1
+                continue
             cve = cve_by_id.get(cve_id)
             if not cve:
                 continue
@@ -214,10 +224,10 @@ def watch_loop():
             refreshed += int(not created)
         if i % 2000 == 0 or i == total:
             print(f"watch_loop: wrote {i}/{total} products — {raised} new, "
-                  f"{refreshed} refreshed…", flush=True)
+                  f"{refreshed} refreshed, {suppressed} suppressed…", flush=True)
 
     notify_new_findings.delay()
-    return f"watch_loop: {raised} new, {refreshed} refreshed"
+    return f"watch_loop: {raised} new, {refreshed} refreshed, {suppressed} suppressed"
 
 
 @shared_task
