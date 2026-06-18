@@ -229,6 +229,7 @@ def asset_audit(request, slug, asset_id):
 
     return render(request, "recon/asset_audit.html", {
         "tenant": tenant, "asset": asset, "audits": audits, "total": len(audits),
+        "remediation_enabled": trmm.remediation_enabled(),
     })
 
 
