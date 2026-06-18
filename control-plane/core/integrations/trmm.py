@@ -99,6 +99,17 @@ def probe_script_id() -> str:
     return os.environ.get("TRMM_PROBE_SCRIPT_ID", "")
 
 
+def list_scripts():
+    """All saved TRMM scripts as {id, name} — for finding a script's pk to put in
+    TRMM_REMEDIATE_SCRIPT_ID / TRMM_PROBE_SCRIPT_ID."""
+    rows = _get("/scripts/")
+    out = []
+    for s in (rows or []):
+        if isinstance(s, dict):
+            out.append({"id": s.get("id"), "name": s.get("name", "")})
+    return out
+
+
 def run_script(agent_id: str, args=None, timeout: int = 120, script_id=None) -> dict:
     """Trigger a saved TRMM script on one agent and wait for output. Defaults to the
     remediation script; pass script_id to run another (e.g. the capability probe)."""
