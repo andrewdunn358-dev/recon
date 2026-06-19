@@ -42,6 +42,11 @@ def dashboard(request):
     top = list(Finding.objects.select_related("cve", "asset", "tenant", "product")
                .annotate(rank=_rank())
                .order_by("rank", F("cve__epss").desc(nulls_last=True))[:40])
+    recent = list(ScanJob.objects.select_related("tenant").order_by("-id")[:8])
+    for j in recent:
+        a = (Asset.objects.filter(tenant=j.tenant, target=j.target).order_by("-id").first()
+             if (j.tenant_id and j.target) else None)
+        j.audit_url = reverse("asset_audit", args=[a.tenant.slug, a.id]) if a else ""
     ctx = {
         "findings": top,
         "total": base.count(),
@@ -51,7 +56,7 @@ def dashboard(request):
         "review_count": by_pri.get("P?", 0),
         "exposed_count": base.filter(asset__internet_facing=True).count(),
         "scan_count": base.filter(source="nuclei").count(),
-        "recent_jobs": ScanJob.objects.all()[:8],
+        "recent_jobs": recent,
     }
     return render(request, "recon/dashboard.html", ctx)
 

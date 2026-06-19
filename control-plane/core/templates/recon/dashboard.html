@@ -207,7 +207,7 @@
     </div>
     {% if recent_jobs %}
     <div class="jobs">recent:
-      {% for j in recent_jobs %}{{ j.target }} [{{ j.get_status_display }}]{% if not forloop.last %} · {% endif %}{% endfor %}
+      {% for j in recent_jobs %}{% if j.audit_url %}<a href="{{ j.audit_url }}" style="color:var(--dim);text-decoration:none">{{ j.target }} [{{ j.get_status_display }}]</a>{% else %}{{ j.target }} [{{ j.get_status_display }}]{% endif %}{% if not forloop.last %} · {% endif %}{% endfor %}
     </div>
     {% endif %}
   </section>
