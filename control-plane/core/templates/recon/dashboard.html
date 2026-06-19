@@ -53,6 +53,31 @@
   .scanout .err{color:var(--p1); font-size:13px; margin-top:8px}
   .livefindings{margin-top:12px; display:flex; flex-direction:column; gap:6px}
   .lf-empty{font-size:12.5px; color:var(--dim); line-height:1.5; border:1px solid var(--line); border-radius:8px; padding:10px 12px}
+  .scanmodal{position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:24px}
+  .scanmodal[hidden]{display:none}
+  .sm-card{width:min(620px,94vw); max-height:86vh; overflow:auto; background:var(--bg,#0c0f16); border:1px solid var(--line); border-radius:14px; padding:20px 22px; box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .sm-head{display:flex; align-items:center; justify-content:space-between}
+  .sm-title{font-family:var(--display); font-size:17px; color:var(--text)}
+  .sm-close{background:none; border:1px solid var(--line); color:var(--dim); border-radius:6px; width:28px; height:28px; cursor:pointer; font-size:14px}
+  .sm-close:hover{color:var(--text); border-color:var(--dim)}
+  .sm-tgt{font-family:var(--mono); font-size:13px; color:var(--p3); margin-top:2px}
+  .sm-phase{display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; color:var(--text)}
+  .sm-stats{display:flex; gap:28px; margin-top:16px}
+  .sm-stat{display:flex; flex-direction:column}
+  .sm-n{font-family:var(--display); font-size:24px; color:var(--text)}
+  .sm-l{font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.04em}
+  .sm-section{margin-top:18px}
+  .sm-sl{font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.04em; margin-bottom:8px}
+  .sm-ports{display:flex; flex-wrap:wrap; gap:6px}
+  .sm-port{font-family:var(--mono); font-size:11px; color:var(--p3); border:1px solid var(--p3); border-radius:5px; padding:1px 7px}
+  .sm-findings{display:flex; flex-direction:column; gap:6px}
+  .sm-muted{font-size:12px; color:var(--faint)}
+  .sm-f{display:flex; align-items:center; gap:10px; font-size:12.5px; border:1px solid var(--line); border-radius:7px; padding:6px 10px}
+  .sm-fp{font-family:var(--mono); font-size:10.5px; padding:0 6px; border-radius:4px; border:1px solid currentColor}
+  .sm-fl{color:var(--text); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .sm-fa{font-family:var(--mono); font-size:10.5px; color:var(--dim)}
+  .sm-summary{margin-top:18px; font-family:var(--mono); font-size:12px; color:var(--dim); border-top:1px solid var(--line); padding-top:12px}
+  .sm-summary a{color:var(--p3); text-decoration:none}
   .lf{display:flex; gap:10px; align-items:center; font-size:12.5px;
     padding:7px 10px; background:var(--bg); border:1px solid var(--line);
     border-left:3px solid var(--c,var(--faint)); border-radius:6px;
@@ -212,6 +237,30 @@
     {% endif %}
   </section>
 
+  <div class="scanmodal" id="scanmodal" hidden>
+    <div class="sm-card">
+      <div class="sm-head">
+        <span class="sm-title" id="sm-title">Scanning…</span>
+        <button class="sm-close" id="sm-close" title="Close">✕</button>
+      </div>
+      <div class="sm-tgt" id="sm-tgt"></div>
+      <div class="sm-phase" id="sm-phase"><span class="spin"></span><span id="sm-phasetext">starting…</span></div>
+      <div class="sm-stats">
+        <div class="sm-stat"><span class="sm-n" id="sm-portn">0</span><span class="sm-l">open ports</span></div>
+        <div class="sm-stat"><span class="sm-n" id="sm-findn">0</span><span class="sm-l">findings</span></div>
+      </div>
+      <div class="sm-section" id="sm-portsbox" hidden>
+        <div class="sm-sl">open ports</div>
+        <div class="sm-ports" id="sm-portlist"></div>
+      </div>
+      <div class="sm-section">
+        <div class="sm-sl">findings</div>
+        <div class="sm-findings" id="sm-findlist"><div class="sm-muted">none yet…</div></div>
+      </div>
+      <div class="sm-summary" id="sm-summary" hidden></div>
+    </div>
+  </div>
+
   <div class="board-head">
     <h2>Findings</h2>
     <span class="count">sorted by exploitation risk</span>
@@ -276,39 +325,66 @@
   const target = document.getElementById('target');
   const out = document.getElementById('scanout');
   const state = document.getElementById('scanstate');
-  const live = document.getElementById('livefindings');
-  const summary = document.getElementById('scansummary');
   const errBox = document.getElementById('scanerr');
+  // modal els
+  const modal = document.getElementById('scanmodal');
+  const mTitle = document.getElementById('sm-title');
+  const mTgt = document.getElementById('sm-tgt');
+  const mPhase = document.getElementById('sm-phasetext');
+  const mPhaseRow = document.getElementById('sm-phase');
+  const mPortN = document.getElementById('sm-portn');
+  const mFindN = document.getElementById('sm-findn');
+  const mPortsBox = document.getElementById('sm-portsbox');
+  const mPortList = document.getElementById('sm-portlist');
+  const mFindList = document.getElementById('sm-findlist');
+  const mSummary = document.getElementById('sm-summary');
+  const mClose = document.getElementById('sm-close');
   let timer = null;
 
   const PRI_COLOR = {P1:'var(--p1)',P2:'var(--p2)',P3:'var(--p3)','P?':'var(--review)',P4:'var(--faint)'};
   function show(){ out.classList.add('show'); }
   function setErr(msg){ errBox.hidden = false; errBox.textContent = msg; }
   function clearErr(){ errBox.hidden = true; errBox.textContent=''; }
-
-  function renderFindings(items, done){
-    if(!items || !items.length){
-      if(done){ live.innerHTML = '<div class="lf-empty">No findings from this scan — nothing in the discovered software matched the CVE corpus, and the active scan flagged nothing. The asset and what was discovered are recorded; open it below to see the detail.</div>'; }
-      return;
-    }
-    live.innerHTML = items.map(f =>
-      `<div class="lf" style="--c:${PRI_COLOR[f.priority]||'var(--faint)'}">`+
-      `<span class="lp" style="color:${PRI_COLOR[f.priority]||'var(--faint)'}">${f.priority}</span>`+
-      `<span class="ll">${esc(f.label)}</span>`+
-      (f.kev?'<span class="lk">KEV</span>':'')+
-      `<span class="la">${esc(f.asset)}</span></div>`).join('');
-  }
   function esc(s){ return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  function openModal(t){
+    mTitle.textContent = 'Scanning…';
+    mTgt.textContent = t;
+    mPhase.textContent = 'queued — waiting for the scan worker…';
+    mPhaseRow.querySelector('.spin').style.display = '';
+    mPortN.textContent = '0'; mFindN.textContent = '0';
+    mPortsBox.hidden = true; mPortList.innerHTML = '';
+    mFindList.innerHTML = '<div class="sm-muted">none yet…</div>';
+    mSummary.hidden = true; mSummary.innerHTML = '';
+    modal.hidden = false;
+  }
+  function closeModal(){ if(timer) clearInterval(timer); modal.hidden = true; go.disabled = false; }
+
+  function renderPorts(csv){
+    const ports = (csv||'').split(',').filter(Boolean);
+    mPortN.textContent = ports.length;
+    if(ports.length){
+      mPortsBox.hidden = false;
+      mPortList.innerHTML = ports.map(p=>`<span class="sm-port">${esc(p)}</span>`).join('');
+    }
+  }
+  function renderFinds(items){
+    mFindN.textContent = (items && items.length) || 0;
+    if(!items || !items.length){ mFindList.innerHTML = '<div class="sm-muted">none yet…</div>'; return; }
+    mFindList.innerHTML = items.map(f =>
+      `<div class="sm-f"><span class="sm-fp" style="color:${PRI_COLOR[f.priority]||'var(--faint)'}">${f.priority}</span>`+
+      `<span class="sm-fl">${esc(f.label)}</span>`+
+      (f.kev?'<span class="sm-fp" style="color:var(--p1)">KEV</span>':'')+
+      `<span class="sm-fa">${esc(f.asset)}</span></div>`).join('');
+  }
 
   async function start(){
     const t = target.value.trim();
-    clearErr(); summary.hidden = true; summary.textContent=''; live.innerHTML='';
+    clearErr();
     if(!t){ show(); setErr('Enter a domain or IP.'); return; }
-    if(!document.getElementById('opt-auth').checked){
-      show(); setErr('Tick the authorisation box first (§11).'); return; }
-    go.disabled = true; show();
-    state.className = 'state'; state.innerHTML = '<span class="spin"></span>queuing…';
-
+    if(!document.getElementById('opt-auth').checked){ show(); setErr('Tick the authorisation box first (§11).'); return; }
+    go.disabled = true;
+    state.className = 'state'; state.innerHTML = '';
     const body = new URLSearchParams({
       target: t,
       nuclei: document.getElementById('opt-nuclei').checked ? '1':'0',
@@ -318,11 +394,11 @@
     let r;
     try{
       r = await fetch("{% url 'scan_start' %}", {
-        method:'POST', headers:{'X-CSRFToken':csrf,
-          'Content-Type':'application/x-www-form-urlencoded'}, body});
-    }catch(e){ go.disabled=false; setErr('Network error.'); return; }
+        method:'POST', headers:{'X-CSRFToken':csrf,'Content-Type':'application/x-www-form-urlencoded'}, body});
+    }catch(e){ go.disabled=false; show(); setErr('Network error.'); return; }
     const data = await r.json();
-    if(!r.ok){ go.disabled=false; state.textContent=''; setErr(data.error||'Failed to start.'); return; }
+    if(!r.ok){ go.disabled=false; show(); setErr(data.error||'Failed to start.'); return; }
+    openModal(t);
     poll(data.job_id);
   }
 
@@ -331,29 +407,20 @@
       let r;
       try{ r = await fetch("{% url 'scan_status' %}?job="+id); }catch(e){ return; }
       const d = await r.json();
-      // live phase + findings as they arrive
-      if(d.status === 'queued'){
-        state.className = 'state';
-        state.innerHTML = '<span class="spin"></span>queued — waiting for the scan worker to pick this up…';
-      }
-      else if(d.status === 'running'){
-        const cnt = d.count ? `  ·  ${d.count} finding(s) so far` : '';
-        state.className = 'state';
-        state.innerHTML = '<span class="spin"></span>'+esc(d.phase||'scanning…')+cnt;
-        renderFindings(d.findings, false);
-      }
+      if(d.status === 'queued'){ mPhase.textContent = 'queued — waiting for the scan worker…'; }
+      else if(d.status === 'running'){ mPhase.textContent = d.phase || 'scanning…'; }
+      renderPorts(d.open_ports);
+      renderFinds(d.findings);
       if(d.status === 'done' || d.status === 'failed'){
         clearInterval(timer); go.disabled = false;
-        state.className = 'state ' + d.status;
+        mPhaseRow.querySelector('.spin').style.display = 'none';
         const n = d.count || 0;
-        state.textContent = (d.status==='done'
-            ? `done — ${esc(d.target)} · ${n} finding${n===1?'':'s'}`
-            : `failed — ${esc(d.target)}`);
-        renderFindings(d.findings, true);
+        mTitle.textContent = d.status==='done' ? `Scan complete — ${n} finding${n===1?'':'s'}` : 'Scan failed';
+        mPhase.textContent = d.status==='done' ? 'done' : 'failed';
         if(d.summary){
-          summary.hidden = false;
-          summary.innerHTML = esc(d.summary) +
-            (d.asset_url ? ` · <a href="${d.asset_url}" style="color:var(--p3);text-decoration:none">View asset →</a>` : '');
+          mSummary.hidden = false;
+          mSummary.innerHTML = esc(d.summary) +
+            (d.asset_url ? `<br><a href="${d.asset_url}">View full results →</a>` : '');
         }
       }
     }, 2000);
@@ -361,6 +428,8 @@
 
   go.addEventListener('click', start);
   target.addEventListener('keydown', e=>{ if(e.key==='Enter') start(); });
+  mClose.addEventListener('click', closeModal);
+  modal.addEventListener('click', e=>{ if(e.target === modal) closeModal(); });
 })();
 </script>
 {% endblock %}

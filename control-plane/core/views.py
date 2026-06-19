@@ -492,4 +492,5 @@ def scan_status(request):
         "findings": findings,
         "count": len(findings),
         "asset_url": asset_url,
+        "open_ports": (asset.open_ports if asset and asset.open_ports else ""),
     })
