@@ -244,6 +244,22 @@ class Finding(models.Model):
         return self.SEVERITY_WORDS.get(self.priority, "Review")
 
     @property
+    def matched_href(self):
+        """An absolute, clickable URL for where an active scan matched. Nuclei
+        sometimes gives a full URL (https://host:port/path) and sometimes a bare
+        host:port — the latter, linked as-is, resolves relative to the current page,
+        so prepend a scheme (https unless it's plainly :80)."""
+        m = (self.matched_at or "").strip()
+        if not m:
+            return ""
+        if m.startswith(("http://", "https://")):
+            return m
+        hostport = m.split("/")[0]
+        port = hostport.rsplit(":", 1)[-1] if ":" in hostport else ""
+        scheme = "http" if port == "80" else "https"
+        return f"{scheme}://{m}"
+
+    @property
     def confidence_label(self):
         """Honest description of HOW this was matched — not a reliability score.
         'high' means the CVE's CPE matched the product's CPE (confirmed). 'medium'
