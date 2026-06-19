@@ -1265,7 +1265,14 @@ def sync_synthops(reset=False, match="inline"):
 
             host = d.get("hostname") or str(d.get("id"))
             public_ip = (d.get("public_ip") or "").strip()
-            target = public_ip or (d.get("ip_address") or "").strip() or host
+            local_ip = (d.get("ip_address") or "").strip()
+            # Managed devices are internal inventory. Their scannable address is
+            # the per-device LAN IP — NOT the site's shared WAN IP (identical for
+            # every device behind the NAT, so using it tagged the whole site as
+            # one target and marked everything "internet-facing"). The external
+            # perimeter is assessed deliberately via the "Assess a target" box,
+            # which creates its own internet-facing asset for that WAN IP.
+            target = local_ip or host
             did = str(d.get("id")) if d.get("id") not in (None, "") else ""
 
             asset = Asset.objects.filter(tenant=tenant, external_id=did).first() if did else None
@@ -1276,7 +1283,9 @@ def sync_synthops(reset=False, match="inline"):
             asset.name = host
             asset.kind = Asset.Kind.HOST
             asset.target = target
-            asset.internet_facing = bool(public_ip)
+            asset.public_ip = public_ip
+            asset.local_ip = local_ip
+            asset.internet_facing = False
             asset.tactical_rmm_agent_id = d.get("tactical_rmm_agent_id") or ""
             asset.status = (d.get("status") or "").strip().lower()
             hc = d.get("last_health_check")

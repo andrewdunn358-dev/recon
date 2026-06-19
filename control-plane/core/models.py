@@ -51,6 +51,12 @@ class Asset(models.Model):
         max_length=255, blank=True,
         help_text="Scannable target: hostname/IP/URL. Used by the Nuclei worker.",
     )
+    # TRMM reports two addresses per device. Stored separately because they mean
+    # different things: local_ip is the device's own LAN address (per-device);
+    # public_ip is the site's shared WAN/NAT egress (the same for every device
+    # behind it — the perimeter, not the device).
+    public_ip = models.CharField(max_length=64, blank=True, default="")
+    local_ip = models.CharField(max_length=64, blank=True, default="")
     last_seen = models.DateTimeField(null=True, blank=True)
     # Online/offline from the source of truth (SynthOps health check). Lets us
     # flag devices that were unreachable so they can be revisited — their
