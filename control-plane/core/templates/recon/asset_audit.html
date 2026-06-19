@@ -112,7 +112,8 @@
           <div class="pver">{{ a.product.version|default:"version unknown" }}</div>
           <div class="pextra">{% if a.product.vendor %}vendor: {{ a.product.vendor }}<br>{% endif %}{% if a.product.cpe %}{{ a.product.cpe }}{% endif %}</div>
         {% else %}
-          <div class="nogate">Active-scan finding — no installed-software record (came from a network probe, not inventory).</div>
+          {% if a.f.matched_at %}<div class="pname">Detected at</div><div class="pver" style="word-break:break-all"><a href="{{ a.f.matched_at }}" target="_blank" rel="noopener noreferrer">{{ a.f.matched_at }}</a></div>{% endif %}
+          <div class="nogate">Active-scan finding — from a network probe, not inventory.</div>
         {% endif %}
       </div>
       <div class="box">

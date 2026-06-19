@@ -476,6 +476,7 @@ def scan_status(request):
         "asset": f.asset.name,
         "kev": bool(f.cve and f.cve.in_kev),
         "reason": f.match_reason or f.title,
+        "at": f.matched_at or "",
     } for f in job.findings.select_related("asset", "cve").order_by("priority")[:200]]
 
     asset = (Asset.objects.filter(tenant=job.tenant, target=job.target).order_by("-id").first()

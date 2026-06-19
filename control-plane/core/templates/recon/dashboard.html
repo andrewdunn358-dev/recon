@@ -373,7 +373,7 @@
     if(!items || !items.length){ mFindList.innerHTML = '<div class="sm-muted">none yet…</div>'; return; }
     mFindList.innerHTML = items.map(f =>
       `<div class="sm-f"><span class="sm-fp" style="color:${PRI_COLOR[f.priority]||'var(--faint)'}">${f.priority}</span>`+
-      `<span class="sm-fl">${esc(f.label)}</span>`+
+      `<span class="sm-fl">${esc(f.label)}${f.at?` <span style="color:var(--faint)">· ${esc(f.at)}</span>`:''}</span>`+
       (f.kev?'<span class="sm-fp" style="color:var(--p1)">KEV</span>':'')+
       `<span class="sm-fa">${esc(f.asset)}</span></div>`).join('');
   }
