@@ -137,12 +137,21 @@ def findings(request):
     WORD = {"P1": "Critical", "P2": "High", "P3": "Medium", "P4": "Low", "P?": "Review"}
     rows = []
     for g in page:
+        affected_list = by_cve.get(g["cve_id"], [])
+        fix_target = fix_product = ""
+        for f in affected_list:
+            ft = f.fix_target
+            if ft:
+                fix_target = ft
+                fix_product = f.product.name if f.product else ""
+                break
         rows.append({
             "cve_id": g["cve_id"], "title": g["cve__title"], "summary": g["cve__summary"],
             "in_kev": g["cve__in_kev"], "epss": g["cve__epss"], "cvss": g["cve__cvss"],
             "devices": g["devices"], "pri": g["pri"],
             "severity_word": WORD.get(g["pri"], "—"),
-            "affected": by_cve.get(g["cve_id"], []),
+            "affected": affected_list,
+            "fix_target": fix_target, "fix_product": fix_product,
             "nvd": f"https://nvd.nist.gov/vuln/detail/{g['cve_id']}",
         })
 
