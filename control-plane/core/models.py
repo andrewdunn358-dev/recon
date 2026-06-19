@@ -290,7 +290,7 @@ class Finding(models.Model):
             add("NVD", f"https://nvd.nist.gov/vuln/detail/{self.cve_id}")
             add("CVE.org", f"https://www.cve.org/CVERecord?id={self.cve_id}")
             if self.cve and self.cve.in_kev:
-                add("CISA KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog")
+                add("CISA KEV", f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={self.cve_id}")
             for url in (self.cve.references if self.cve else [])[:4]:
                 add("advisory", url)
 

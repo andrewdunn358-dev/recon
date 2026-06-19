@@ -103,7 +103,7 @@
       <div class="links">
         <a href="{{ r.nvd }}" target="_blank" rel="noopener">NVD ↗</a>
         <a href="https://www.cve.org/CVERecord?id={{ r.cve_id }}" target="_blank" rel="noopener">CVE.org ↗</a>
-        {% if r.in_kev %}<a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog" target="_blank" rel="noopener">CISA KEV ↗</a>{% endif %}
+        {% if r.in_kev %}<a href="https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={{ r.cve_id }}" target="_blank" rel="noopener">CISA KEV ↗</a>{% endif %}
       </div>
 
       <p class="seclabel">Affected devices ({{ r.devices }})</p>
