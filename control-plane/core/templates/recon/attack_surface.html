@@ -1,0 +1,47 @@
+{% extends "recon/base.html" %}
+{% block title %}Recon — Attack surface{% endblock %}
+{% block style %}
+  .wrap{max-width:1080px; margin:0 auto; padding:30px 28px 80px}
+  h1{font-family:var(--display); font-size:22px; margin:0 0 4px}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 22px}
+  .sub a{color:var(--p3); text-decoration:none}
+  .card{border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; background:var(--surface)}
+  .top{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap}
+  .tgt{font-family:var(--mono); font-size:15px; color:var(--text)}
+  .tn{font-size:12px; color:var(--dim)}
+  .counts{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--faint)}
+  .counts b{color:var(--text)}
+  .ports{margin-top:12px; display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+  .plabel{font-size:11px; color:var(--faint); margin-right:4px}
+  .port{font-family:var(--mono); font-size:11px; color:var(--p3); border:1px solid var(--p3); border-radius:5px; padding:1px 7px}
+  .noports{font-size:12px; color:var(--faint)}
+  .links{margin-top:12px; font-size:12.5px}
+  .links a{color:var(--p3); text-decoration:none; margin-right:16px}
+  .empty{color:var(--faint); padding:30px 0; line-height:1.6}
+  .empty a{color:var(--p3); text-decoration:none}
+{% endblock %}
+{% block body %}
+<main class="wrap">
+  <h1>Attack surface</h1>
+  <p class="sub">External targets you've assessed — open ports, detected services, and active-scan findings. Separate from the internal CVE worklist. · <a href="{% url 'dashboard' %}">Assess a new target →</a></p>
+
+  {% for a in assets %}
+  <div class="card">
+    <div class="top">
+      <span class="tgt">{{ a.target|default:a.name }}</span>
+      {% if a.tenant %}<span class="tn">{{ a.tenant.name }}</span>{% endif %}
+      <span class="counts"><b>{{ a.n_products }}</b> service(s) · <b>{{ a.n_findings }}</b> finding(s)</span>
+    </div>
+    <div class="ports">
+      <span class="plabel">open ports:</span>
+      {% for p in a.ports %}<span class="port">{{ p }}</span>{% empty %}<span class="noports">none recorded — run an assess with “Port sweep (naabu)” ticked</span>{% endfor %}
+    </div>
+    <div class="links">
+      <a href="{% url 'asset_audit' a.tenant.slug a.id %}">View findings &amp; services →</a>
+    </div>
+  </div>
+  {% empty %}
+  <p class="empty">No external targets assessed yet.<br>Use <a href="{% url 'dashboard' %}">Assess a target</a> on a domain or IP — tick “Port sweep (naabu)” to enumerate open ports — and the perimeter will appear here.</p>
+  {% endfor %}
+</main>
+{% endblock %}

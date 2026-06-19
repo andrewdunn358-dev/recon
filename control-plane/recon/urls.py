@@ -3,7 +3,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework.authtoken.views import obtain_auth_token
-from core.views import dashboard, findings as findings_view, scan_start, scan_status, clients, client_detail, client_scan_start, asset_scan_start, asset_audit, remediate_start, remediate_status, suppress_start, unsuppress, suppressions, remediations
+from core.views import dashboard, findings as findings_view, attack_surface, scan_start, scan_status, clients, client_detail, client_scan_start, asset_scan_start, asset_audit, remediate_start, remediate_status, suppress_start, unsuppress, suppressions, remediations
 from core.api import TenantViewSet, AssetViewSet, FindingViewSet, ScanViewSet
 
 router = DefaultRouter()
@@ -27,6 +27,7 @@ urlpatterns = [
     path("suppress/<int:finding_id>/", suppress_start, name="suppress_start"),
     path("suppress/<int:sup_id>/undo/", unsuppress, name="unsuppress"),
     path("suppressions/", suppressions, name="suppressions"),
+    path("attack-surface/", attack_surface, name="attack_surface"),
     path("remediations/", remediations, name="remediations"),
     path("api/", include(router.urls)),
     path("api/auth-token/", obtain_auth_token, name="api_auth_token"),

@@ -62,6 +62,25 @@ def dashboard(request):
 
 
 @login_required
+def attack_surface(request):
+    """External attack surface — a distinct part of the app from the internal CVE
+    worklist. The targets you've assessed via 'Assess a target' (internet-facing
+    assets): their open ports, detected services, and external scan findings."""
+    assets = list(Asset.objects.filter(internet_facing=True)
+                  .select_related("tenant").order_by("tenant__name", "name"))
+    ids = [a.id for a in assets]
+    fc = dict(Finding.objects.filter(asset_id__in=ids).values_list("asset")
+              .annotate(c=Count("id")).values_list("asset", "c"))
+    pc = dict(Product.objects.filter(asset_id__in=ids).values_list("asset")
+              .annotate(c=Count("id")).values_list("asset", "c"))
+    for a in assets:
+        a.n_findings = fc.get(a.id, 0)
+        a.n_products = pc.get(a.id, 0)
+        a.ports = [p for p in (a.open_ports or "").split(",") if p]
+    return render(request, "recon/attack_surface.html", {"assets": assets})
+
+
+@login_required
 def findings(request):
     """Findings grouped by CVE — the unit of work. One row per vulnerability with
     the count of affected devices, expandable to the device list (same-device
@@ -71,7 +90,9 @@ def findings(request):
     from collections import defaultdict
     sev = request.GET.get("sev") or ""
     client = request.GET.get("client") or ""
-    base = Finding.objects.all()
+    # Internal CVE worklist only. External active-scan (Nuclei) results live on the
+    # separate Attack Surface page, so perimeter recon isn't drowned in inventory.
+    base = Finding.objects.filter(source="watch")
     tenant = None
     if client:
         tenant = Tenant.objects.filter(slug=client).first()

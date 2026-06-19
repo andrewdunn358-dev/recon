@@ -57,6 +57,8 @@ class Asset(models.Model):
     # behind it — the perimeter, not the device).
     public_ip = models.CharField(max_length=64, blank=True, default="")
     local_ip = models.CharField(max_length=64, blank=True, default="")
+    # Open ports from the last naabu sweep (comma-separated), for external targets.
+    open_ports = models.CharField(max_length=512, blank=True, default="")
     last_seen = models.DateTimeField(null=True, blank=True)
     # Online/offline from the source of truth (SynthOps health check). Lets us
     # flag devices that were unreachable so they can be revisited — their

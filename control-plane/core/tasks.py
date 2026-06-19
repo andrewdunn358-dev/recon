@@ -700,6 +700,27 @@ def adhoc_assess(job_id: int):
                 upd(phase=f"Live: {probed} web host(s), {n_products} product(s) found…",
                     progress=probed)
 
+        # Phase 2.5 — optional port sweep (naabu). This is the step the dashboard
+        # panel was missing: it enumerates what's actually open on the target so the
+        # attack surface isn't just "whatever answered on 443".
+        open_ports = {}
+        if job.do_ports:
+            upd(phase=f"Port sweep of {len(hosts)} host(s) with naabu — finding open ports…")
+            try:
+                sweep = subprocess.run(["naabu", "-silent", "-json", "-list", "-"],
+                                       input="\n".join(sorted(hosts)),
+                                       capture_output=True, text=True, timeout=1200)
+                open_ports = discovery.parse_naabu(sweep.stdout)
+            except FileNotFoundError:
+                upd(phase="naabu not found in the scan-worker image — skipping port sweep.")
+            except subprocess.TimeoutExpired:
+                upd(phase="Port sweep timed out — continuing with what was found.")
+            for h, plist in open_ports.items():
+                Asset.objects.filter(tenant=tenant, target=h).update(
+                    open_ports=",".join(str(p) for p in plist))
+            n_ports = sum(len(v) for v in open_ports.values())
+            upd(phase=f"{n_ports} open port(s) across {len(open_ports)} host(s).")
+
         # Phase 3 — match discovered products against the full CVE corpus.
         upd(phase=f"{probed} live host(s), {n_products} product(s). Matching against CVE corpus…")
         cve_matches = 0
@@ -730,6 +751,12 @@ def adhoc_assess(job_id: int):
             by_target = {a.target: a for a in
                          tenant.assets.exclude(target="").filter(target__icontains=base) if a.target}
             tlist = list(by_target) or [target]
+            # Add discovered host:port so Nuclei's service/network templates have
+            # concrete targets, not just the bare host on 80/443.
+            for h, plist in open_ports.items():
+                for p in plist:
+                    if p not in (80, 443):
+                        tlist.append(f"{h}:{p}")
             upd(phase=f"Deep scanning {len(tlist)} host(s) with Nuclei — the slow part…",
                 total=len(tlist), progress=0)
             with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as tf:
@@ -745,7 +772,9 @@ def adhoc_assess(job_id: int):
                     nuclei_found += 1
                     upd(phase=f"Nuclei: {nuclei_found} finding(s) so far…", progress=nuclei_found)
 
-        job.summary = (f"{probed} live host(s), {n_products} product(s); "
+        n_ports_total = sum(len(v) for v in open_ports.values())
+        ports_bit = f", {n_ports_total} open port(s)" if job.do_ports else ""
+        job.summary = (f"{probed} live host(s), {n_products} product(s){ports_bit}; "
                        f"{cve_matches} CVE match(es), {nuclei_found} scan finding(s).")
         upd(status=ScanJob.Status.DONE, phase="done", finished_at=timezone.now())
         job.save(update_fields=["summary"])

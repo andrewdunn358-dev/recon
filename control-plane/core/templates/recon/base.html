@@ -68,6 +68,7 @@
       <a href="{% url 'dashboard' %}" class="{% if request.resolver_match.url_name == 'dashboard' %}on{% endif %}">Triage</a>
       <a href="{% url 'findings' %}" class="{% if request.resolver_match.url_name == 'findings' %}on{% endif %}">Findings</a>
       <a href="{% url 'clients' %}" class="{% if request.resolver_match.url_name == 'clients' or request.resolver_match.url_name == 'client_detail' %}on{% endif %}">Clients</a>
+      <a href="{% url 'attack_surface' %}" class="{% if request.resolver_match.url_name == 'attack_surface' %}on{% endif %}">Attack Surface</a>
       <a href="{% url 'remediations' %}" class="{% if request.resolver_match.url_name == 'remediations' %}on{% endif %}">Remediations</a>
       <a href="{% url 'suppressions' %}" class="{% if request.resolver_match.url_name == 'suppressions' %}on{% endif %}">Dismissed</a>
     </nav>
