@@ -244,6 +244,16 @@ class Finding(models.Model):
         return self.SEVERITY_WORDS.get(self.priority, "Review")
 
     @property
+    def fix_target(self):
+        """The version to upgrade to for a version-match finding (the affected
+        range's first fixed release). The actual remediation, derived from the data
+        we already matched on. Empty for scan findings or open-ended ranges."""
+        if self.source != "watch" or not self.cve or not self.product:
+            return ""
+        from .matching import fixed_version_for
+        return fixed_version_for(self.product, self.cve)
+
+    @property
     def matched_href(self):
         """An absolute, clickable URL for where an active scan matched. Nuclei
         sometimes gives a full URL (https://host:port/path) and sometimes a bare

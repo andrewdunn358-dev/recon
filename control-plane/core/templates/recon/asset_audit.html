@@ -48,6 +48,8 @@
   .rv.in .rdot,.in>.rdot{background:var(--p2)}
 
   .verdict{margin-top:14px; font-size:13px; color:var(--text); line-height:1.55}
+  .fix{margin-top:10px; font-size:13px; color:var(--text); line-height:1.55; border-left:2px solid var(--ok); padding-left:12px}
+  .fix b{color:var(--ok)}
   .aufail{margin-top:12px; font-size:12.5px; line-height:1.5; color:var(--p2);
     border:1px solid var(--p2); border-radius:8px; padding:9px 12px; background:rgba(0,0,0,.12)}
   .fixchip{font-family:var(--mono); font-size:10px; border-radius:5px; padding:2px 7px; white-space:nowrap; cursor:help; margin-right:8px}
@@ -136,6 +138,7 @@
     </div>
 
     {% if a.f.match_reason %}<div class="verdict"><span class="vlab">Matcher's reasoning</span>{{ a.f.match_reason }}</div>{% endif %}
+    {% if a.f.fix_target %}<div class="fix"><span class="vlab">Remediation</span>Update {{ a.product.name }} to <b>{{ a.f.fix_target }}</b> or later — that's the first release outside this CVE's affected range.</div>{% endif %}
     {% if a.f.auto_update_failed_at %}<div class="aufail">⚠ Auto-update didn't take — the device still reported the same version after a Recon update on {{ a.f.auto_update_failed_at|date:"j M H:i" }}. This app likely can't be patched via winget/choco (e.g. it's managed by its own updater); needs a manual or alternate update.</div>{% endif %}
     {% if a.why %}<div class="why">{% for w in a.why %}<span>{{ w }}</span>{% endfor %}</div>{% endif %}
     <div class="cfoot">

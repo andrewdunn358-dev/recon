@@ -315,6 +315,19 @@ def match_product_to_cve(product, cve) -> Match | None:
     return best
 
 
+def fixed_version_for(product, cve) -> str:
+    """The version to upgrade to: the upper bound (lessThan) of the affected range
+    the product falls in — i.e. the first fixed release. Empty when the advisory
+    gives no clean fixed version (open-ended or lessThanOrEqual ranges)."""
+    if not product or not cve:
+        return ""
+    for aff in (cve.affected or []):
+        for vr in (aff.get("versions") or []):
+            if version_in_range(product.version, vr) is True:
+                return (vr.get("lessThan") or "").strip()
+    return ""
+
+
 def _describe_range(vr: dict) -> str:
     """Human phrasing of a cvelistV5 version-range object."""
     base = (vr.get("version") or "").strip()
