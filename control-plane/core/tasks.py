@@ -707,15 +707,17 @@ def adhoc_assess(job_id: int):
         if job.do_ports:
             upd(phase=f"Port sweep of {len(hosts)} host(s) with naabu — finding open ports…")
             try:
-                # Full port range. No -s flag: naabu auto-selects a SYN scan when it
-                # has raw-socket capability (granted to the scan-worker in compose),
-                # which scans all 65k ports in a couple of minutes instead of the
-                # hour a connect scan takes against a filtering firewall. Falls back
-                # to connect scan automatically if caps are missing.
+                # naabu's "-list -" is NOT read as stdin by this version (it tries to
+                # open a file named "-"), so write the hosts to a real temp file.
+                # Full port range; no -s flag so naabu auto-selects a SYN scan when it
+                # has raw-socket capability (granted in compose) — minutes, not the
+                # hour a connect scan takes against a filtering firewall.
+                with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as hf:
+                    hf.write("\n".join(sorted(hosts)))
+                    hfile = hf.name
                 sweep = subprocess.run(
-                    ["naabu", "-silent", "-json", "-list", "-",
+                    ["naabu", "-silent", "-json", "-list", hfile,
                      "-p", "-", "-rate", "1000", "-retries", "1"],
-                    input="\n".join(sorted(hosts)),
                     capture_output=True, text=True, timeout=900)
                 open_ports = discovery.parse_naabu(sweep.stdout)
             except FileNotFoundError:
