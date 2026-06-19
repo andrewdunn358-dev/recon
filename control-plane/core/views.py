@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, F
 from django.http import JsonResponse
 from django.shortcuts import render, get_object_or_404
+from django.urls import reverse
 from .models import Finding, ScanJob, Tenant, Asset, Product, RemediationAction, Suppression
 from .tasks import adhoc_assess, assess_client, assess_asset, remediate_via_trmm
 from .integrations import trmm
@@ -451,6 +452,10 @@ def scan_status(request):
         "reason": f.match_reason or f.title,
     } for f in job.findings.select_related("asset", "cve").order_by("priority")[:200]]
 
+    asset = (Asset.objects.filter(tenant=job.tenant, target=job.target).order_by("-id").first()
+             if job.target else None)
+    asset_url = reverse("asset_audit", args=[asset.tenant.slug, asset.id]) if asset else ""
+
     return JsonResponse({
         "status": job.status,
         "phase": job.phase,
@@ -460,4 +465,5 @@ def scan_status(request):
         "target": job.target,
         "findings": findings,
         "count": len(findings),
+        "asset_url": asset_url,
     })

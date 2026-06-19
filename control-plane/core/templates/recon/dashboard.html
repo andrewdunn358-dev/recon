@@ -52,6 +52,7 @@
   }
   .scanout .err{color:var(--p1); font-size:13px; margin-top:8px}
   .livefindings{margin-top:12px; display:flex; flex-direction:column; gap:6px}
+  .lf-empty{font-size:12.5px; color:var(--dim); line-height:1.5; border:1px solid var(--line); border-radius:8px; padding:10px 12px}
   .lf{display:flex; gap:10px; align-items:center; font-size:12.5px;
     padding:7px 10px; background:var(--bg); border:1px solid var(--line);
     border-left:3px solid var(--c,var(--faint)); border-radius:6px;
@@ -285,8 +286,11 @@
   function setErr(msg){ errBox.hidden = false; errBox.textContent = msg; }
   function clearErr(){ errBox.hidden = true; errBox.textContent=''; }
 
-  function renderFindings(items){
-    if(!items || !items.length) return;
+  function renderFindings(items, done){
+    if(!items || !items.length){
+      if(done){ live.innerHTML = '<div class="lf-empty">No findings from this scan — nothing in the discovered software matched the CVE corpus, and the active scan flagged nothing. The asset and what was discovered are recorded; open it below to see the detail.</div>'; }
+      return;
+    }
     live.innerHTML = items.map(f =>
       `<div class="lf" style="--c:${PRI_COLOR[f.priority]||'var(--faint)'}">`+
       `<span class="lp" style="color:${PRI_COLOR[f.priority]||'var(--faint)'}">${f.priority}</span>`+
@@ -336,17 +340,20 @@
         const cnt = d.count ? `  ·  ${d.count} finding(s) so far` : '';
         state.className = 'state';
         state.innerHTML = '<span class="spin"></span>'+esc(d.phase||'scanning…')+cnt;
-        renderFindings(d.findings);
+        renderFindings(d.findings, false);
       }
       if(d.status === 'done' || d.status === 'failed'){
         clearInterval(timer); go.disabled = false;
         state.className = 'state ' + d.status;
-        state.textContent = (d.status==='done'?'done — ':'failed — ')+esc(d.target);
-        renderFindings(d.findings);
-        if(d.summary){ summary.hidden = false; summary.textContent = d.summary; }
-        if(d.status === 'done'){
-          state.textContent += '  · refreshing the board…';
-          setTimeout(()=>location.reload(), 2500);
+        const n = d.count || 0;
+        state.textContent = (d.status==='done'
+            ? `done — ${esc(d.target)} · ${n} finding${n===1?'':'s'}`
+            : `failed — ${esc(d.target)}`);
+        renderFindings(d.findings, true);
+        if(d.summary){
+          summary.hidden = false;
+          summary.innerHTML = esc(d.summary) +
+            (d.asset_url ? ` · <a href="${d.asset_url}" style="color:var(--p3);text-decoration:none">View asset →</a>` : '');
         }
       }
     }, 2000);
