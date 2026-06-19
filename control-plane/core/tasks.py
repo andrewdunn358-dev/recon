@@ -707,9 +707,15 @@ def adhoc_assess(job_id: int):
         if job.do_ports:
             upd(phase=f"Port sweep of {len(hosts)} host(s) with naabu — finding open ports…")
             try:
-                sweep = subprocess.run(["naabu", "-silent", "-json", "-list", "-"],
-                                       input="\n".join(sorted(hosts)),
-                                       capture_output=True, text=True, timeout=1200)
+                # Connect scan (-s c) so it works without raw-socket privileges in
+                # the container, and full port range (-p -) so non-standard ports
+                # (admin panels, 5555, 8443, etc.) are actually found — naabu's
+                # default is only the top ~100 ports, which misses most of them.
+                sweep = subprocess.run(
+                    ["naabu", "-silent", "-json", "-list", "-",
+                     "-s", "c", "-p", "-", "-rate", "1000"],
+                    input="\n".join(sorted(hosts)),
+                    capture_output=True, text=True, timeout=1800)
                 open_ports = discovery.parse_naabu(sweep.stdout)
             except FileNotFoundError:
                 upd(phase="naabu not found in the scan-worker image — skipping port sweep.")

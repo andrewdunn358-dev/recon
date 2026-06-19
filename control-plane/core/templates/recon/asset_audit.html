@@ -80,6 +80,7 @@
   <h1>Audit · {{ asset.name }}</h1>
   <p class="meta">{{ asset.get_kind_display }} · {% if asset.internet_facing %}internet-facing{% else %}internal{% endif %}
     {% if asset.local_ip %} · LAN {{ asset.local_ip }}{% endif %}{% if asset.public_ip %} · WAN {{ asset.public_ip }}{% endif %}
+    {% if asset.open_ports %} · open ports: {{ asset.open_ports }}{% endif %}
     · {{ asset.products.count }} installed products · {{ total }} findings</p>
 
   <div class="note">
