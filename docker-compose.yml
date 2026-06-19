@@ -83,6 +83,11 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     depends_on: [db, redis]
+    # naabu's SYN scan needs raw sockets; without this it falls back to a connect
+    # scan that takes ~an hour on a full port range against a filtering firewall.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     restart: unless-stopped
 
 volumes:
